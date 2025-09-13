@@ -1,15 +1,15 @@
 # ACG solo
 
 ## 概要
-このプロジェクトは，ACGカードシミュレーションを行うためのウェブアプリケーションです．
-index.html, style.css, script.js で構成されています．
+このプロジェクトは，ACGシミュレーションを行うためのウェブアプリケーションです．
+index.html, style.css, script.js, card_list.json で構成されています．
 
 ## 主な機能
-- デッキ JSON（ACG Builder 形式 : https://acg-builder.vercel.app/ ）の読み込みと初期配置
+- デッキ JSON（ACG Builder 形式 : https://acg-builder.vercel.app/ ）の読み込み
 - フォルダ選択でのカード画像読込（自動拡張子検出）
 - card_list.json（カード情報）の自動読み込み
 - 盤面ログの記録，再現
-- 盤面のスクリーンショット
+- 盤面のスクリーンショット(修正中)
 
 ## 基本操作
 - 左ドラッグ : カードの移動
