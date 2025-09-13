@@ -47,6 +47,98 @@ function resolveCardImage(cardNo){
   });
 }
 
+// === Images picker support ===
+const IMG_EXTS = ["png", "jpg", "jpeg", "webp", "gif"];
+
+const imageStore = {
+  // "picker": フォルダ選択, "auto": ./images 推定
+  source: "auto",
+  map: new Map(),       // key: 拡張子抜きのベース名（例: "ACG-001", "Back", "token"）
+  hasAny: false,
+  hasDefaultDir: false, // ./images が存在するかの簡易プローブ
+};
+
+// UI要素を取る（overlay内）
+const btnPickImages   = document.getElementById("btnPickImages");
+const imagesDirInput  = document.getElementById("imagesDirInput");
+const imagesStatus    = document.getElementById("imagesStatus");
+
+// 画像の存在チェック（Image オブジェクトで軽量確認）
+function imageExists(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url + ((url.includes("?") ? "&" : "?") + "t=" + Date.now());
+  });
+}
+
+// ./images に「Back.*」or「token.*」があるかを簡易検出（起動時に一度だけ）
+async function probeDefaultImages() {
+  for (const base of ["Back", "token"]) {
+    for (const ext of IMG_EXTS) {
+      if (await imageExists(`./images/${base}.${ext}`)) {
+        imageStore.hasDefaultDir = true;
+        updateImagesStatus(true);
+        return true;
+      }
+    }
+  }
+  imageStore.hasDefaultDir = false;
+  updateImagesStatus(false);
+  return false;
+}
+
+function updateImagesStatus(ok) {
+  // ok===true なら強制的に非表示。そうでなければ imageStore の状態で判定
+  const hide = ok === true || imageStore.hasAny || imageStore.hasDefaultDir;
+  imagesStatus?.classList.toggle("hidden", hide);
+}
+
+function setCardImage(imgEl, base) {
+  const candidates = [];
+
+  // 1) 選択フォルダ由来（即URL完成：ObjectURL）
+  const picked = pickFromSelectedFolder(base);
+  if (picked) candidates.push(picked);
+
+  // 2) 既定 ./images の拡張子総当たり（img.onerror で順送り）
+  for (const ext of IMG_EXTS) {
+    candidates.push(`./images/${base}.${ext}`);
+  }
+
+  // 順に試す
+  trySetImgSequential(imgEl, candidates);
+}
+
+function pickFromSelectedFolder(base) {
+  // 完全一致 → 大文字・小文字ゆらぎを軽く吸収
+  if (imageStore.map.has(base)) return imageStore.map.get(base);
+  const lower = base.toLowerCase();
+  const upper = base.toUpperCase();
+  for (const k of [lower, upper]) {
+    if (imageStore.map.has(k)) return imageStore.map.get(k);
+  }
+  return null;
+}
+
+function trySetImgSequential(imgEl, urls) {
+  let i = 0;
+  const tryNext = () => {
+    if (i >= urls.length) {
+      // 全滅：src消去＆エラーメッセージ表示
+      imgEl.removeAttribute("src");
+      updateImagesStatus(false);
+      return;
+    }
+    const url = urls[i++];
+    imgEl.onerror = () => tryNext();
+    imgEl.onload  = () => updateImagesStatus(true);
+    imgEl.src = url;
+  };
+  tryNext();
+}
+
 /* ── p1p1 カウンターを “+2/+2” “-1/-1” 形式に整形 ──────────── */
 function fmtP1P1(n){
   const sign = n > 0 ? '+' : '';         // 正ならプラス記号、負ならそのまま
@@ -114,6 +206,34 @@ const allowedMoves = {
 let selectedUID = null;
 // ★ ダブルクリック判定の猶予（ミリ秒）を好きに設定
 const DBLCLICK_MS = 280;
+
+// DOM 準備後に初期化（既存の起動処理にぶら下げてOK）
+document.addEventListener("DOMContentLoaded", () => {
+  // 1) デフォルト ./images 存在確認
+  probeDefaultImages();
+
+  // 2) フォルダ選択 UI
+  btnPickImages?.addEventListener("click", () => imagesDirInput?.click());
+
+  imagesDirInput?.addEventListener("change", (e) => {
+    // 既存の ObjectURL を掃除
+    for (const url of imageStore.map.values()) {
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    }
+    imageStore.map.clear();
+
+    const files = Array.from(e.target.files || []);
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) continue;
+      const nameNoExt = f.name.replace(/\.[^.]+$/, "");
+      // ベース名（拡張子なし） → ObjectURL
+      imageStore.map.set(nameNoExt, URL.createObjectURL(f));
+    }
+    imageStore.source = "picker";
+    imageStore.hasAny = imageStore.map.size > 0;
+    updateImagesStatus();
+  });
+});
 
 // ===== Recording / Replay: CLEAN SINGLE IMPLEMENTATION =====
 
@@ -425,7 +545,6 @@ $('#replaySeek')?.addEventListener('input', e=>{
 /** =====================
  *  画像解決（拡張子フォールバック）
  *  ===================== */
-const IMG_EXTS = ['png','jpg','jpeg','webp'];
 function imageSrcForCardNo(cardNo){
   if(cardNo === 'TOKEN'){
     return ['./images/token.png','./images/token.jpg','./images/token.jpeg','./images/token.webp'];
@@ -514,7 +633,6 @@ function updateDeckTitleCounts(){
   }
 }
 
-
 function cardElement(card){
   const el = document.createElement('div');
   el.className = 'card' + (card.faceUp ? '' : ' face-down');
@@ -525,7 +643,11 @@ function cardElement(card){
   const img = document.createElement('img');
   img.crossOrigin = 'anonymous';
   const srcs = card.faceUp ? imageSrcForCardNo(card.cardNo) : CARD_BACKS;
-  img.src = srcs[0];
+  if (card.faceUp) {
+  setCardImage(img, card.cardNo);
+} else {
+  setCardImage(img, 'Back');
+}
   img.dataset.alts = JSON.stringify(srcs.slice(1));
   img.onload  = function(){
     // 小サムネの成功URLをプレビュー側キャッシュへ学習
@@ -815,9 +937,7 @@ function updatePreview(uid, opts ={}){
   if (touchImage && big) {
     big.dataset.cardNo = card.cardNo;
     big.crossOrigin = 'anonymous';
-    resolveCardImage(card.cardNo)
-      .then(src => { if (big.dataset.cardNo === card.cardNo) big.src = src; })
-      .catch(()  => { if (big.dataset.cardNo === card.cardNo) big.src = 'images/Back.png'; });
+    setCardImage(big, card.cardNo);
   }
 
   title.textContent = `${card.name || card.cardNo}（${card.cardNo}）`;
