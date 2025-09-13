@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ACG ソロ </title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="overlay" id="overlay">
+  <div class="panel">
+    <h2 style="margin:0;">
+      デッキを読み込んで開始
+    </h2>
+    <div class="hint">
+      <ul style="margin:0px 0 0 9px">
+      <li>ACGの一人回し用の非公式サイトです．</li>
+      <li>ACGビルダーで保存したJSON（<code>mainDeck</code> / <code>territoryDeck</code>）を選択してください。</li>
+      <li>デッキ枚数：<code>基礎デッキ(mainDeck): 40枚以上</code>, <code>領土デッキ(territoryDeck): 10枚</code></li>
+      <li>カード画像 <code>./images/&lt;カードナンバー&gt;.*</code>.（裏面<code>./images/Back.*</code>，トークン<code>./images/token.*</code>）</li>
+    </div>
+    <div class="rows">
+      <div class="twoCol">
+        <div>
+          <button class="btn" id="pickDeckBtn">デッキJSONを選ぶ</button>
+          <span id="deckChosen" class="chip hidden"></span>
+        </div>
+        <div class="hint">※<button class="btn sm" id="loadDefaultDeckBtn">deck_list_kimesai.json 読込</button></div>
+      </div>
+      <div class="twoCol">
+        <div>
+          <span class="hint">カード情報 (<code>card_list.json</code>) を自動読込します。失敗時は手動指定：</span>
+          <button class="btn sm" id="pickCardListBtn">card_list.json を選ぶ</button>
+          <span id="cardListChosen" class="chip hidden"></span>
+        </div>
+        <div class="hint" id="cardListStatus">未読込</div>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end">
+        <button class="btn btn-lg primary" id="startBtn" disabled>読み込んで開始</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <header>
+    <div class="left">
+      <strong>ACG ソロ</strong>
+      <span class="chip">seed: <span id="seedView">-</span></span>
+      <span id="initReturn" class="pill bad hidden">初期2枚戻し（残: <span id="initReturnLeft">2</span>）</span>
+      <button class="btn" id="btnReloadDeck">デッキ選択</button>   
+      <button class="btn" id="btnInit7">初手</button>
+      <button class="btn" id="btnReset7">盤面リセット＆7ドロー</button>
+
+    </div>
+    <div class="right">
+      <button class="btn" id="btnExport">盤面保存</button>
+      <button class="btn" id="btnImport">盤面読込</button>
+      <button class="btn" id="btnReplay">再生 ▶</button>
+      <button class="btn" id="btnShot">盤面スクショ</button>
+
+      <span class="chip" id="deckCountChip">基礎デッキ: 0</span> 
+      <span class="chip" id="tDeckCountChip">領土デッキ: 0</span> 
+      <button class="chip" id="btnDraw" style="border:1px solid #fafafa"></button> 
+      <button class="chip" id="btnDraw1">1ドロー (D)</button>
+    </div>
+
+<div id="replayPanel" class="replayPanel hidden">
+  <div class="row" style="justify-content:space-between;align-items:center">
+    <strong>リプレイ</strong>
+    <div>
+      <input type="file" id="replayFile" accept=".json" class="hidden">
+      <button class="btn sm" id="btnReplayOpen">ログ読込</button>
+      <button class="btn sm" id="btnReplayClose">閉じる</button>
+    </div>
+  </div>
+
+  <!-- シークバー（中央に丸ポチ●付） -->
+  <div class="replaySeekWrap">
+    <input type="range" id="replaySeek" min="0" max="0" value="0" step="1" />
+  </div>
+
+  <!-- カウントと倍速 -->
+  <div class="row" style="justify-content:space-between;align-items:center">
+    <div class="hint" id="replayStatus">0/0</div>
+    <div class="rateGroup">
+      <button class="btn sm rate" data-rate="1">x1</button>
+      <button class="btn sm rate" data-rate="1.5">x1.5</button>
+      <button class="btn sm rate" data-rate="2">x2</button>
+    </div>
+  </div>
+
+  <!-- コントロール（|◀ ▷ ▶|） -->
+  <div class="controls">
+    <button class="btn sm" id="btnStepPrev">|◀</button>
+    <button class="btn sm" id="btnPlayToggle">▷</button>
+    <button class="btn sm" id="btnStepNext">▶|</button>
+  </div>
+</div>
+  </header>
+
+  <!-- 左：フリーゾーン + プレビュー + ログ -->
+  <div class="leftpane">
+  <section class="zone" id="zone-free">
+    <h3>FREE
+      <span class="toolbar">
+        <span class="counterPalette" id="counterPalette">
+          <span class="paletteItem" draggable="true" data-ctype="p1p1">+1/+1</span>
+          <span class="paletteItem" draggable="true" data-ctype="plus1">[+1]</span>
+        </span>
+        <button class="btn sm" id="btnToken">ﾄｰｸﾝ生成</button>
+      </span>
+    </h3>
+    <div class="content" data-zone="FREE" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+  </section>
+
+  <section class="zone" id="zone-preview">
+    <h3>拡大プレビュー＆情報</h3>
+    <div class="preview">
+      <div class="big"><img id="bigImg" alt=""></div>
+      <div class="info" id="infoBox">
+        <h4 id="infoTitle">（カード未選択）</h4>
+        <div class="kv" id="infoKV"></div>
+        <div class="sep" style="height:1px;background:#273044;margin:3px 0"></div>
+        <div id="infoText"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="zone" id="zone-log">
+    <h3>操作ログ <span class="toolbar"><button class="btn sm" id="btnRecord">●記録開始</button></span></h3>
+    <div class="log" id="logBox"></div>
+  </section>
+  </div>
+
+  <!-- 中央：4行 -->
+  <main>
+    <section class="zone" data-zone="BATTLEFIELD">
+      <h3>戦場</h3>
+      <div class="content" id="battlefield" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+    </section>
+
+    <section class="zone" data-zone="HAND">
+      <h3>手札 <span class="toolbar">
+        <label class="chip"><input id="sortHand" type="checkbox"> 名前順</label>
+      </span></h3>
+      <div class="content" id="hand" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+    </section>
+
+    <section class="zone" data-zone="DECK">
+      <h3>基礎デッキ 
+        <span class="toolbar" style="margin-left:auto">
+          <span class="leftTools">
+            <span class="hint">※ﾀﾞﾌﾞﾙｸﾘｯｸ：先頭(右端)→手札</span>
+          </span>
+          <span class="rightInfo">
+            <button class="btn sm" id="btnDrawFromDeck">手札補充+1</button>
+            <button class="btn sm" id="btnDealToFree">FREE+1</button>
+            <button class="btn sm" id="btnShuffleMain">基デ🔀</button>
+          </span>
+        </span>
+      </h3>
+      <div class="content" id="mainDeck" ondblclick="drawFromMain()" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+    </section>
+
+    <section class="zone">
+      <h3>領地/領土デッキ <span class="toolbar">
+        <span class="hint">※ﾀﾞﾌﾞﾙｸﾘｯｸ：先頭(右端)→領地</span>
+        <button class="btn sm" id="btnDrawFromTDeck">領地補充+1</button>
+        <button class="btn sm" id="btnShuffleTerr">領デ🔀</button>
+      </span></h3>
+      <div class="row content" style="border:none">
+        <div class="zone" style="flex:1" data-zone="T_FIELD">
+          <h3>領地<span class="toolbar">
+          <button class="btn sm" id="btnWakeTerritory1" style="margin-right:auto">起床</button>
+          <label class="chip"><input id="sortTerritory" type="checkbox">領土 名前順</label>
+          </span>
+          </h3>
+          <div class="content" id="territory" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+        </div>
+        <div class="zone" data-zone="T_DECK">
+          <h3>領土デッキ</h3>
+          <div class="content" id="tDeck" ondblclick="drawFromTDeck()" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 右：墓地/除外 -->
+  <aside>
+    <section class="zone" data-zone="GRAVE">
+      <h3>墓地</h3>
+      <div class="content" id="grave" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+    </section>
+    <section class="zone" data-zone="BANISH">
+      <h3>除外</h3>
+      <div class="content" id="banish" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+    </section>
+  </aside>
+
+  <footer>
+    <div class="hint">右クリック：表裏 / ダブルクリック：回転（戦・領のみ） / ショートカット：<b>D</b>=ドロー, <b>R</b>=回転, <b>X</b>=表裏, <b>F</b>=基デ→FREE, <b>S</b>=ログ保存</div>
+    <div class="hint">画像が見つからない場合は自動で拡張子を順に探索します。</div>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="script.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,299 @@
+:root{
+  --bg:#fafafa; --panel:#edf0f7; --panel2:#f6f6f6; --border:#a3a3a3;
+  --text:#18202a; --muted:#1d2632; --accent:#db4848; --danger:#cc0000; --ok:#2fa572;
+
+  /* 左カラム幅/中央最小幅/右カラム幅（必要ならここで調整） */
+  --col-left: 260px;
+  --col-center-min: 440px;
+  --col-right: 260px;
+
+  /* 左ペイン3行の高さ（上:FREE / 中:プレビュー / 下:ログ）*/
+  --left-free-row: auto;
+  --left-preview-row: 500px;  /* ←お好みで 420〜520 あたり */
+  --left-log-row: 150px;
+  --preview-big-height: 100px; /* プレビュー画像の高さ据え置き */
+
+  /* main（中央4行）の高さを変数化 */
+  --row-battle: minmax(160px, 160px);
+  --row-hand: 170px;
+  --row-decks: 180px;     /* 基礎デッキ / 領土デッキ */
+  --row-territory: 230px; /* 領地 */
+  /* 横幅（同じ行内で T_DECK : T_FIELD の比率） */
+  --t-deck-width: 50%;         /* ← 領土デッキを細くしたいなら30〜40% */
+  --card-w: 80px;                         /* ← ここを 84px, 80px などに */
+  --card-h: calc(var(--card-w) * 1.4348); /* 92:132 の比率 ≒ 1.4348 */
+}
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Noto Sans,"Helvetica Neue",Arial
+  }
+.wrap{
+  display:grid;
+  grid-template-columns: var(--col-left) minmax(var(--col-center-min), 1fr) var(--col-right);
+  grid-template-rows:auto 1fr auto;
+  gap:2px; height:100%;
+}
+  header,footer{
+    grid-column:1 / span 3;
+    background:var(--panel);
+    padding:2px 2px;
+    display:flex;align-items:center;
+    justify-content:space-between;
+    gap:2px}
+  header .left{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+  header .right{display:flex;gap:2px;flex-wrap:wrap}
+  #deckCountChip, #tDeckCountChip { display: none !important; }
+  .pill{border:1px solid var(--border);background:var(--panel2);border-radius:999px;padding:2px 2px;font-size:14px}
+  .pill.bad{border-color:var(--danger);color:#d60000; padding:0 0 0 8px}
+  .chip{border:1px solid var(--border);background:var(--panel2);border-radius:999px;padding:3px 8px 3px 3px;font-size:14px;color:var(--muted)}
+  .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:2px;padding:2px 6px;cursor:pointer}
+  .btn:hover{border-color:var(--accent)}
+  .btn.sm{padding:3px 6px;font-size:14px;border-radius:6px}
+  .btn.warn{border-color:var(--danger);color:#d00000}
+  .hidden{display:none !important}
+/* 左ペインの行配分 */
+.leftpane{
+  grid-column:1 / span 1; padding:4px;
+  display:grid !important;
+/*   grid-template-rows: minmax(132px, var(--left-free-row, auto)) var(--left-preview-row, 440px) var(--left-log-row, 200px);
+*/
+  grid-template-rows: minmax(132px, var(--left-free-row, auto)) var(--left-preview-row, 200px) var(--left-log-row, 200px);
+  gap:4px;
+}
+  /* ===== 3 ゾーンの高さをグリッド行に任せる ===== */
+  #zone-preview .preview{
+    display: grid;
+    grid-template-rows: 0.5fr 1fr;
+    height: 100%;
+  }
+  /* 画像枠の“固定350px”をやめ、グリッドの行高に従わせる */
+#zone-preview .big{
+  flex: auto;
+  height: 100%;
+  min-height: 0;        /* 折返し時のはみ出し防止 */
+  overflow: auto; /* ← スクロールできる窓に */
+  -webkit-overflow-scrolling: touch;
+}
+#zone-preview .big img{
+  width: 80%;
+  height: auto;           
+  display: block;
+  background:var(--panel);
+  padding: 2px 2px 2px 40px;
+}
+/* 情報欄もはみ出し防止＆スクロール */
+#zone-preview .info{
+  min-height: 0;
+  height: auto;
+  overflow: auto;
+}
+/* プレビュー情報の見出し */
+#zone-preview .info .stats{ margin:2px 0; font-size:14px; }
+#zone-preview .info .sep{ height:1px; background:var(--panel2); margin:3px 0; opacity:.8 }
+#zone-preview .info .abilityList{ margin:4px 0 0 0; padding-left:18px; font-size:16px }
+
+/* ★ スクロールバーを非表示（縦横とも隠す）*/
+#logBox,
+#zone-preview,
+#zone-preview .big,
+#zone-preview .info{
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE/Edge レガシー */
+}
+
+#zone-preview .big::-webkit-scrollbar,
+#zone-preview .info::-webkit-scrollbar{
+  display: none;                /* WebKit */
+}
+#infoText{ white-space: pre-wrap; line-height: 1.5; }
+
+  #zone-log{
+    position:static !important;   /* ← absolute 指定を無効化 */
+    width:100% !important;
+    height:auto !important;
+    margin:0 !important;
+  }
+  main{
+    grid-column:2 / span 1;
+    padding:4px; display:grid; 
+    grid-template-rows: var(--row-battle) var(--row-hand) var(--row-decks) var(--row-territory); 
+    gap:2px;
+  }
+  .row.content {
+    display: flex;
+    gap: 2px;
+  }
+  .zone[data-zone="T_FIELD"] {
+    flex: 1;
+    max-width: 100%;
+  }
+  .zone[data-zone="T_DECK"] {
+    width: var(--t-deck-width);
+  }
+  aside{grid-column:3 / span 1; padding:4px; display:grid; grid-template-rows: 1fr 1fr; gap:4px;}
+  .zone{background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:4px; display:flex; flex-direction:column; gap:2px; min-height:100px; overflow-x: auto;}
+  .zone h3{margin:0; font-size:14px; color:var(--muted); display:flex; align-items:center; gap:2px; justify-content:space-between; padding: 0 0 0 6px }
+  .toolbar{display:flex; gap:4px; align-items:center; flex-wrap:wrap}
+  .content{flex:1; overflow:auto; padding:4px; border-radius:8px; border:1px dashed var(--border);}
+  .row{display:flex; gap:4px}
+  .gridBattle{display:grid; grid-template-columns: repeat(auto-fill, 96px); grid-auto-rows: 132px; gap:4px; align-content:flex-start;height:100%}
+  .hrow{
+    display:flex;
+    flex-wrap: nowrap;       /* 横一列に並べる */
+    align-items: flex-start;  
+    gap:2px; 
+    overflow-x:auto; 
+    overflow-y: hidden;
+    padding-bottom:4px
+  }
+/* ★ 領地の重ね（20%） */
+#territory.hrow{ gap:0; } /* このゾーンだけ gap を 0 に */
+#territory .card{
+  margin-left: calc(var(--card-w) * -0.3);
+}
+#territory .card:first-child{
+  margin-left: 0;
+} 
+  .vstack{display:flex; flex-direction:column; gap:6px; overflow:auto}
+  .card{width: var(--card-w); height: var(--card-h);  border-radius:10px; border:1px solid var(--border); background:var(--panel2); position:relative; user-select:none; overflow:hidden; flex-shrink:0}
+  .card .imgWrap{position:absolute; inset:0}
+  .card img{width:100%; height:100%; object-fit:cover; display:block}
+  .card .nameBar{position:absolute; left:0; right:0; bottom:0; background:linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.75) 50%); padding:5px 3px 3px; font-size:11px; font-weight:700}
+  .card.selected{outline:3px solid var(--accent); outline-offset:0px;box-shadow: 0 0 0 3px rgba(216,58,58,.25);}
+  .card.face-down{background: repeating-linear-gradient(45deg, #101724, #101724 10px, #0c1320 10px, #0c1320 20px); border-style:dashed}
+  .badge{position:absolute; top:4px; right:4px; background:var(--panel2); border:1px solid #2e7dd7; border-radius:8px; padding:4px 6px; font-size:11px; color:#a7b6c5}
+  .ctrBadges{position:absolute; left:50%; transform:translate(-50%, -50%); top:40%; display:flex; gap:2px; white-space:nowrap}
+  .ctr{display: inline-flex; align-items: center;justify-content: center ;font-size:13px; font-weight:Bold ;padding:4px 6px; background:var(--panel2); border:1px solid var(--border); border-radius:999px; cursor:pointer; box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
+  .ctr.plus1{background:#000; color:#fff; text-shadow:0 0 3px #fff;font-weight:Bold; }
+  .ctrMenu{position:absolute; top:22px; left:50%; transform:translateX(-50%); background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:4px; display:flex; gap:4px; z-index:5}
+  .ctrMenu .btn{padding:4px 3px; font-size: 10px;}
+  .preview{display:flex; flex-direction:column; gap:4px; height:auto}
+/* プレビュー画像枠の高さ */
+.big{ flex:0 0 var(--preview-big-height); /* 350pxだった箇所 */ }
+  .big img{width:100%; height:100%; object-fit:contain; background:var(--panel2);}
+  .info{flex:1; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:4px; font-size:14px; background:var(--panel2);}
+  .info h4{margin:0 0 6px 0}
+  .info .kv{display:flex; gap:4px; flex-wrap:wrap; color:#002040}
+  .kv .tag{border:1px solid var(--border); border-radius:999px; padding:3px 3px; font-size:13px; background:var(--panel2);}
+  .log{height:100%; overflow:auto; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:6px}
+  .counterPalette{display:grid; grid-template-columns: repeat(2, 1fr); gap:4px; flex-wrap:wrap}
+  .paletteItem{border:1px solid var(--border); border-radius:999px; padding:4px 5px; background:var(--panel2); cursor:grab;display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;}
+  .overlay{position:fixed; inset:0; background:rgba(6,8,11,.92); display:flex; align-items:center; justify-content:center; z-index:1000}
+  .panel{width:min(800px, calc(100% - 24px)); background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:12px; margin: 2px}
+  .hint{font-size:14px; color:var(--muted)}
+  .rows{display:grid; gap:4px}
+  .twoCol{display:grid; grid-template-columns:1fr auto; gap:4px; align-items:center}
+  .danger{color:#ffb1b1}
+  .zone[data-zone="DECK"] .content, .zone[data-zone="T_DECK"] .content{padding:4px}
+  .small{transform:scale(.92); transform-origin:top left}
+  .zone .hrow .card{cursor:grab}
+  .zone .vstack .card{cursor:grab}
+  .deckStrip, .tdeckStrip{
+    display:flex;
+    overflow-x:auto;
+    gap:0;
+    padding:4px;
+  }
+  .deckStrip .card,
+  .tdeckStrip .card{
+    margin-left:-5%;
+  }
+
+/* 先頭だけ基準位置 */
+  .deckStrip .card:first-child,
+  .tdeckStrip .card:first-child{
+    margin-left:0;
+}
+/* ---------------------------
+   縦5枚ずつ → 右に列を追加（墓地/除外/フリー）
+   ※JSが .pileCols を付け、カードは絶対配置で置く
+----------------------------*/
+.pileCols{
+  position: relative;
+  display: block;
+  overflow: visible;       /* FREEは“欄を拡大”したいので縦スクロールにしない */
+  min-height: var(--card-h)!important;   /* カード1枚ぶん */
+}
+.pileCols .card{
+  position: absolute;      /* JSでleft/top/z-indexを与える */
+}
+.replayPanel{
+  position:fixed; right:12px; top:56px; width:250px;
+  background:var(--panel); border:1px solid var(--border); border-radius:12px;
+  padding:5px; z-index:9999; box-shadow:0 12px 30px rgba(0,0,0,.35);
+}
+.replayPanel.hidden{ display:none }
+.replayPanel .row{ display:flex; gap:6px; flex-wrap:wrap; }
+#replaySeek{ width:100% }
+/* 録画中（ボタン）を赤く・軽く点滅 */
+#btnRecord.recording{
+  background:#b91c1c;
+  border-color:#ef4444;
+  color:#fff;
+  animation: recPulse 1.4s infinite;
+}
+@keyframes recPulse{
+  0%{ box-shadow:0 0 0 0 rgba(239,68,68,.85) }
+  70%{ box-shadow:0 0 0 10px rgba(239,68,68,0) }
+  100%{ box-shadow:0 0 0 0 rgba(239,68,68,0) }
+}
+.replaySeekWrap{ position:relative; padding:4px 10px }
+.replaySeekWrap .dot{ position:absolute; left:2px; top:-2px; font-size:12px; opacity:.85 }
+#replaySeek{ width:100% }
+
+.rate.active{ background: var(--accent); color:#fff; border-color: var(--accent); }
+.controls{ display:flex; gap:6px; justify-content:center }
+#btnDraw1{ display:none !important; }
+#zone-preview{
+  overflow: hidden;     /* ← 全体スクロール禁止 */
+}
+/* 墓地・除外の枠（コンテナ）を自動伸縮に */
+.zone[data-zone="GRAVE"] .content,
+.zone[data-zone="BANISH"] .content{
+  height:auto;
+  max-height:none;
+  overflow:visible;
+}
+/* 列コンテナの最小高さ＝カード1枚ぶん（カードサイズ変数に追従） */
+.pileCols{ 
+  min-height: var(--card-h);
+  overflow: visible;           /* 内部スクロールを無効化 */
+}
+/* Start ボタンを他より大きく */
+.btn.btn-lg{ padding:10px 18px; font-size:18px; border-radius:10px; border-width:2px; }
+.btn.primary{ background:#fff; border-color:var(--accent); }
+.btn.primary:hover{ background:#fff; border-color:#ffffff; }
+
+/* リプレイ移動の可視化：移動中は白90%の被せ */
+.card.moving::after{
+  content:"";
+  position:absolute; inset:0;
+  background:rgba(255,255,255,.9); 
+  pointer-events:none;
+}
+/* 追従アニメ（FLIP用、transformを滑らかに） */
+.card.moving{ will-change: transform; }
+/* リプレイ用フライアニメの最前面レイヤ */
+#replay-fly-layer{
+  position:fixed; inset:0; pointer-events:none; z-index: 2147483647;
+}
+/* 画面上を飛ぶ“ゴースト”カード */
+.card-ghost{
+  position:fixed; will-change: transform, top, left, width, height;
+  box-shadow: 0 10px 28px rgba(0,0,0,.35);
+  border-radius: 8px;
+}
+/* 「ドラッグ中」の雰囲気（白90%の被せ） */
+.card-ghost::after{
+  content:""; position:absolute; inset:0;
+  background: rgba(255,255,255,.9);
+  pointer-events:none;
+}
