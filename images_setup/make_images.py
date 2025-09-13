@@ -149,7 +149,7 @@ def main():
     ap = argparse.ArgumentParser(description="ACGカード画像を一括取得して <root>/<out> に保存します。")
     ap.add_argument("--root", type=str, default=".", help="index.html や card_url_list.txt があるルートフォルダ")
     ap.add_argument("--out", type=str, default="images", help="出力フォルダ名（例: images, images1）")
-    ap.add_argument("--list", type=str, default=None, help="card_url_list.txt のパス（未指定なら <root>/card_url_list.txt）")
+    ap.add_argument("--list", type=str, default=None, help="card_url_list.txt のパス（未指定なら <root>/card_url_list.txt）。見つからなければDL処理はスキップ")
     ap.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="同時ダウンロード数")
     ap.add_argument("--retries", type=int, default=DEFAULT_RETRIES, help="各URLの再試行回数")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="HTTP タイムアウト秒")
@@ -161,31 +161,30 @@ def main():
 
     root = Path(args.root).resolve()
     out_dir = root / args.out
-    list_path = Path(args.list).resolve() if args.list else (root / "card_url_list.txt")
-
-    if not list_path.exists():
-        print(f"[ERROR] URLリストが見つかりません: {list_path}")
-        sys.exit(2)
-
-    urls = read_url_list(list_path)
-    total = len(urls)
-    if total == 0:
-        print("[INFO] ダウンロード対象がありません。")
-        sys.exit(0)
-
-    est_size = "~180MB 程度"
-    if not args.yes:
-        print(f"この操作で {args.out!r} フォルダを作成し、カード画像をダウンロードします（推定 {est_size}）。")
-        print(f"root: {root}")
-        print(f"list: {list_path}")
-        ok = input("続行しますか? [y/N]: ").strip().lower() in ("y", "yes")
-        if not ok:
-            print("キャンセルしました。")
-            sys.exit(0)
-
+    # ★ ここを先に作る：URLリストが無くても images を必ず作成
     out_dir.mkdir(parents=True, exist_ok=True)
+    list_path = Path(args.list).resolve() if args.list else (root / "card_url_list.txt")
+    urls = []
+    if list_path.exists():
+        urls = read_url_list(list_path)
+    else:
+        print(f"[INFO] URLリストが見つかりませんでした。ダウンロード処理はスキップします: {list_path}")
+    total = len(urls)
 
-    print(f"[INFO] 開始: {total} 件 / 出力: {out_dir}")
+    # 確認プロンプトはDLがあるときだけ出す（assetsだけならスキップ）
+    if total > 0:
+        est_size = "~180MB 程度"
+        if not args.yes:
+            print(f"この操作で {args.out!r} フォルダを作成し、カード画像をダウンロードします（推定 {est_size}）。")
+            print(f"root: {root}")
+            print(f"list: {list_path}")
+            ok = input("続行しますか? [y/N]: ").strip().lower() in ("y", "yes")
+            if not ok:
+                print("キャンセルしました。")
+                # ただし assets の移動は続行するため return しない
+
+    if total > 0:
+        print(f"[INFO] 開始: {total} 件 / 出力: {out_dir}")
     done = 0
     skipped_codes: List[str] = []
     saved_count = 0
@@ -216,25 +215,37 @@ def main():
         # 中止後の集計は最低限に留めます。
         pass
 
-    print("\n[INFO] 完了")
-    print(f"  保存/既存: {saved_count} / スキップ: {len(skipped_codes)}")
-
+    if total > 0:
+        print("\n[INFO] 完了")
+        print(f"  保存/既存: {saved_count} / スキップ: {len(skipped_codes)}")
+ 
     # Back.*, token.* を移動/コピー
     moved = []
     with contextlib.suppress(Exception):
+        # ★ 要件: ./Back.png ./token.png を ./images/ に移動（PNG優先）
         for base, outbase in (("Back", "Back"), ("token", "token")):
-            for ext in ("png", "jpg", "jpeg", "webp"):
+            # まず PNG 固定で見る
+            for ext in ("png",):
                 src = root / f"{base}.{ext}"
                 if src.exists():
                     dst = out_dir / f"{outbase}.{ext}"
                     move_or_copy(src, dst, args.copy_assets)
                     moved.append(dst.name)
                     break
+            else:
+                # PNG が無ければ従来通りの拡張子も走査（任意）
+                for ext in ("jpg", "jpeg", "webp"):
+                    src = root / f"{base}.{ext}"
+                    if src.exists():
+                        dst = out_dir / f"{outbase}.{ext}"
+                        move_or_copy(src, dst, args.copy_assets)
+                        moved.append(dst.name)
+                        break
     if moved:
         print(f"  追加コピー/移動: {', '.join(moved)}")
 
-    # スキップ一覧をファイルに出力
-    if skipped_codes:
+    # スキップ一覧をファイルに出力（DLがあったときのみ）
+    if total > 0 and skipped_codes:
         skip_txt = out_dir / "skipped_codes.txt"
         skip_txt.write_text("\n".join(skipped_codes), encoding="utf-8")
         print(f"  スキップ一覧: {skip_txt}")
