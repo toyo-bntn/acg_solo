@@ -161,11 +161,45 @@
   margin-left: 0;
 } 
   .vstack{display:flex; flex-direction:column; gap:6px; overflow:auto}
-  .card{width: var(--card-w); height: var(--card-h);  border-radius:10px; border:1px solid var(--border); background:var(--panel2); position:relative; user-select:none; overflow:hidden; flex-shrink:0}
-  .card .imgWrap{position:absolute; inset:0}
+  .card{
+    width: var(--card-w); 
+    height: var(--card-h);  
+    border-radius:10px; 
+    border: none !important;
+    box-shadow: none !important;
+    background:transparent !important;
+    outline: none !important;
+    position:relative; 
+    user-select:none; 
+    overflow:hidden; 
+    flex-shrink:0
+  }
+  .imgWrap{position:absolute; inset:0; background: transparent; overflow: hidden; border-radius: var(--card-radius);}
   .card img{width:100%; height:100%; object-fit:cover; display:block}
-  .card .nameBar{position:absolute; left:0; right:0; bottom:0; background:linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.75) 50%); padding:5px 3px 3px; font-size:11px; font-weight:700}
-  .card.selected{outline:3px solid var(--accent); outline-offset:0px;box-shadow: 0 0 0 3px rgba(216,58,58,.25);}
+  .card .rotWrap{
+  position:absolute; inset:0;
+  transform: rotate(var(--rot, 0deg));
+  transform-origin: center;
+  }
+  /* 新: アクセントは画像の矩形にだけ出す */
+ .imgWrap.selected::after{
+   content:"";
+   position:absolute; inset:0;
+   border:3px solid var(--accent);          /* 赤 */
+   border-radius:8px;                 /* 画像角丸に合わせるなら */
+   pointer-events:none;
+ }
+  .card .nameBar{
+    position:absolute;
+    left:50%; top:80%;
+    transform-origin:center;
+    transform: translate(-50%,-50%) rotate(var(--rot, 0deg));
+  /* 見た目はお好みで */
+    background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.75) 50%);
+    padding:1px 1px; font-size:12px; font-weight:700;
+    border-radius:6px;
+  }
+  .card.selected{outline:none !important; outline-offset:0px;box-shadow: none !important;}
   .card.face-down{background: repeating-linear-gradient(45deg, #101724, #101724 10px, #0c1320 10px, #0c1320 20px); border-style:dashed}
   .badge{position:absolute; top:4px; right:4px; background:var(--panel2); border:1px solid #2e7dd7; border-radius:8px; padding:4px 6px; font-size:11px; color:#a7b6c5}
   .ctrBadges{position:absolute; left:50%; transform:translate(-50%, -50%); top:40%; display:flex; gap:2px; white-space:nowrap}
@@ -175,7 +209,7 @@
   .ctrMenu .btn{padding:4px 3px; font-size: 10px;}
   .preview{display:flex; flex-direction:column; gap:4px; height:auto}
 /* プレビュー画像枠の高さ */
-.big{ flex:0 0 var(--preview-big-height); /* 350pxだった箇所 */ }
+  .big{ flex:0 0 var(--preview-big-height); /* 350pxだった箇所 */ }
   .big img{width:100%; height:100%; object-fit:contain; background:var(--panel2);}
   .info{flex:1; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:4px; font-size:14px; background:var(--panel2);}
   .info h4{margin:0 0 6px 0}
@@ -203,11 +237,49 @@
     gap:0;
     padding:4px;
   }
+/* HAND のカードを重ねて表示（左重なり） */
+.handStrip.hrow { gap: 0; }                 /* gap があると重なりに効くので 0 に */
+.handStrip .card { margin-left: -3%; }     /* ご要望通り */
+.handStrip .card:first-child { margin-left: 0; }
+  /* （任意）重なり時の見た目向上：選択 or ホバーを前面に */
+.handStrip .card { position: relative; }
+.handStrip .card:hover { z-index: 5; }
+/* :has は対応ブラウザなら便利（選択中カードを前面に） */
+@supports(selector(:has(.x))){
+  .handStrip .card:has(.imgWrap.selected){ z-index: 10; }
+}
   .deckStrip .card,
   .tdeckStrip .card{
-    margin-left:-5%;
-  }
+    margin-left:-8%;
+}
+/* --- 前面制御の共通設定（HAND / DECK / T_DECK） --- */
+.handStrip .card,
+.deckStrip .card,
+.tdeckStrip .card{
+  position: relative;   /* z-index を効かせるため */
+}
 
+.handStrip .card:hover,
+.deckStrip .card:hover,
+.tdeckStrip .card:hover{
+  z-index: 5;           /* ホバー中は前面 */
+}
+
+/* 選択中（画像に枠）も前面に：:has 対応ブラウザで */
+@supports(selector(:has(.x))){
+  .handStrip .card:has(.imgWrap.selected),
+  .deckStrip .card:has(.imgWrap.selected),
+  .tdeckStrip .card:has(.imgWrap.selected){
+    z-index: 10;
+  }
+}
+
+/* （任意）キーボード操作でも前面にしたい場合 */
+.handStrip .card:focus-within,
+.deckStrip .card:focus-within,
+.tdeckStrip .card:focus-within{
+  z-index: 6;
+}
 /* 先頭だけ基準位置 */
   .deckStrip .card:first-child,
   .tdeckStrip .card:first-child{

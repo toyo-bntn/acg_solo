@@ -12,6 +12,13 @@
     <h2 style="margin:0;">
       デッキを読み込んで開始
     </h2>
+          <div class="twoCol">
+        <div>
+          <button class="btn" id="pickDeckBtn">デッキJSONを選ぶ</button>
+          <span id="deckChosen" class="chip hidden"></span>
+        </div>
+        <div class="hint">※<button class="btn sm" id="loadDefaultDeckBtn">お試し（deck_list_kimesai.json 読込）</button></div>
+      </div>
     <div class="hint">
       <ul style="margin:0px 0 0 9px">
       <li>ACGの一人回し用の非公式サイトです．</li>
@@ -20,13 +27,6 @@
       <li>カード画像 <code>./images/&lt;カードナンバー&gt;.*</code>.（裏面：<code>./images/Back.*</code>，トークン：<code>./images/token.*</code>）</li>
     </div>
     <div class="rows">
-      <div class="twoCol">
-        <div>
-          <button class="btn" id="pickDeckBtn">デッキJSONを選ぶ</button>
-          <span id="deckChosen" class="chip hidden"></span>
-        </div>
-        <div class="hint">※<button class="btn sm" id="loadDefaultDeckBtn">お試し（deck_list_kimesai.json 読込）</button></div>
-      </div>
       <div class="twoCol">
         <div>
           <span class="hint">カード情報 (<code>card_list.json</code>) を自動読込します。失敗時は手動指定：</span>

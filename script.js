@@ -163,6 +163,32 @@ $('#btnWakeTerritory1')?.addEventListener('click', wakeAllTerritory);
 $('#btnWakeTerritory2')?.addEventListener('click', wakeAllTerritory);
 
 let CARD_W = 92, CARD_H = 132;
+function applySquareBox(el){
+  const side = CARD_H; // ← 常に「h」を一辺に
+  el.style.width  = side + 'px';
+  el.style.height = side + 'px';
+
+  // 画像の実寸（縦向き基準）で中央配置
+  const wrap = el.querySelector('.imgWrap');
+  if (wrap){
+    wrap.style.position = 'absolute';
+    wrap.style.width  = CARD_W + 'px';
+    wrap.style.height = CARD_H + 'px';
+    wrap.style.left   = '50%';
+    wrap.style.top    = '50%';
+    wrap.style.transform = 'translate(-50%, -50%)';
+    // 中の <img> は width:100%; height:100% でOK（歪まず等倍）
+    const img = wrap.querySelector('img');
+    if (img){
+      img.style.width  = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'contain'; // 念のため（歪み防止）
+    }
+  }
+}
+function applyRotation(cardEl, rot){
+  cardEl.style.setProperty('--rot', (((rot%360)+360)%360) + 'deg');
+}
 function refreshCardMetrics(){
   const cs = getComputedStyle(document.documentElement);
   const w = parseInt(cs.getPropertyValue('--card-w')) || 92;
@@ -696,6 +722,7 @@ function cardElement(card){
   }
   // 回転
   el.style.transform = `rotate(${card.rot}deg)`;
+  applySquareBox(el);
 
  {
   let lastClickTS = 0;
@@ -724,7 +751,8 @@ function cardElement(card){
     singleTimer = setTimeout(()=>{
       // ★ 単クリック：選択トグル（同じカードなら解除）
       // el を渡して、その場で accent を付け外し（再描画待ちにしない）
-      selectCard(card.uid, el);
+      const accentTarget = el.querySelector('.imgWrap') || el;
+      selectCard(card.uid, accentTarget);
       singleTimer = null;
     }, DBLCLICK_MS + 10);
   });
@@ -810,6 +838,7 @@ function renderZone(zoneName, container, opt={}){
     container.classList.add('tdeckStrip');
   }else{
     container.classList.remove('deckStrip','tdeckStrip');
+    container.classList.remove('deckStrip','tdeckStrip','handStrip');
   } 
   // 並び替えオプション
   container.innerHTML='';
@@ -827,11 +856,15 @@ function renderZone(zoneName, container, opt={}){
   if(zoneName==='BATTLEFIELD' || zoneName==='HAND' || zoneName==='T_FIELD'){
     container.classList.remove('pileCols');     // 保険：縦積みクラスを外す
     container.classList.add('hrow');
+    if (zoneName === 'HAND') container.classList.add('handStrip');
+    else container.classList.remove('handStrip');
 
     container.innerHTML = '';
     for(const c of arr){
       const el = cardElement(c);
-      if(selectedUID === c.uid) el.classList.add('selected');
+     if(selectedUID === c.uid){
+       (el.querySelector('.imgWrap') || el).classList.add('selected');
+     }
       container.appendChild(el);
     }
     return; // 横並びはここで終了
@@ -878,7 +911,9 @@ function renderZone(zoneName, container, opt={}){
   container.innerHTML = '';
   for(const c of arr){
     const el = cardElement(c);
-    if(selectedUID === c.uid) el.classList.add('selected');
+   if(selectedUID === c.uid){
+     (el.querySelector('.imgWrap') || el).classList.add('selected');
+   }
     container.appendChild(el);
   }
 }
@@ -901,22 +936,25 @@ function removeCard(uid){
   return null;
 }
 function clearSelection(){
-  document.querySelectorAll('.card.selected').forEach(el=> el.classList.remove('selected'));
+  document.querySelectorAll('.imgWrap.accent').forEach(el=> el.classList.remove('selected'));
   selectedUID = null;
-  updatePreview(null);
+  if (typeof updatePreview === 'function') updatePreview(null);
 }
 function selectCard(uid, el){
   if(selectedUID === uid){
     // もう一度同じカードをクリック → 解除
     el?.classList.remove('selected');
     selectedUID = null;
-    updatePreview(null);
+    if (typeof updatePreview === 'function') updatePreview(null);
     return;
   }
+  document.querySelectorAll('.imgWrap.selected')
+    .forEach(n => n.classList.remove('selected'));
+
   clearSelection();
   selectedUID = uid;
   el?.classList.add('selected');
-  updatePreview(uid);
+  if (typeof updatePreview === 'function') updatePreview(uid);
 }
 function updatePreview(uid, opts ={}){
   const card = findCard(uid);
@@ -997,6 +1035,9 @@ function toggleTap(uid){
   }
 
   log(`${displayName(c)} を回転 (${c.rot}°)`);
+  const el = document.querySelector(`.card[data-uid="${uid}"]`);
+  if (el) applySquareBox(el);
+
   renderAll();
 }
 
@@ -1144,6 +1185,8 @@ function resetBoardAndDraw7(){
 /** =====================
  *  状態保存/読込・スクショ
  *  ===================== */
+function degToRad(d) { return (d * Math.PI) / 180; }
+
 function exportState(){
   const data = {
     seed: SEED,
@@ -1175,47 +1218,47 @@ function importState(file){
   };
   r.readAsText(file);
 }
-async function takeScreenshot(){
-  const root = document.documentElement;                 // ★ ページ全体
-  if (!window.html2canvas) {
-    alert('html2canvas が読み込めませんでした。オンラインで再試行してください。');
-    return;
-  }
-  // ページ全体の実寸
+// スクショ
+ async function takeScreenshot(){
+   const root = document.documentElement;                 // ★ ページ全体
+   if (!window.html2canvas) {
+     alert('html2canvas が読み込めませんでした。オンラインで再試行してください。');
+     return;
+   }
+   // ページ全体の実寸
   const w = Math.max(root.scrollWidth, document.body.scrollWidth, window.innerWidth);
   const h = Math.max(root.scrollHeight, document.body.scrollHeight, window.innerHeight);
-
-  const canvas = await html2canvas(root, {
-    backgroundColor: '#0f1216',
-    scale: 2,
-    useCORS: true,
-    allowTaint: false,
-    imageTimeout: 15000,
-    windowWidth:  w,
-    windowHeight: h,
-    scrollX: 0,
-    scrollY: 0,
-    onclone: (doc) => {
-      // 撮影時だけ内部スクロール領域を全展開
-      doc.querySelectorAll('.wrap, .leftpane, .rightpane, main, .content, #infoText, #logBox')
-        .forEach(el => {
-          el.style.height   = 'auto';
-          el.style.maxHeight = 'none';
-          el.style.overflow  = 'visible';
-        });
-    }
-  });
-
-
-  canvas.toBlob((blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'acg_board_full.png';
-    a.click();
-    URL.revokeObjectURL(url);
-  });
-}
+ 
+   const canvas = await html2canvas(root, {
+     backgroundColor: '#0f1216',
+     scale: 2,
+     useCORS: true,
+     allowTaint: false,
+     imageTimeout: 15000,
+     windowWidth:  w,
+     windowHeight: h,
+     scrollX: 0,
+     scrollY: 0,
+     onclone: (doc) => {
+       // 撮影時だけ内部スクロール領域を全展開
+       doc.querySelectorAll('.wrap, .leftpane, .rightpane, main, .content, #infoText, #logBox')
+         .forEach(el => {
+           el.style.height   = 'auto';
+           el.style.maxHeight = 'none';
+           el.style.overflow  = 'visible';
+         });
+     }
+   });
+ 
+   canvas.toBlob((blob) => {
+     const url = URL.createObjectURL(blob);
+     const a = document.createElement('a');
+     a.href = url;
+     a.download = 'acg_board.png';
+     a.click();
+     URL.revokeObjectURL(url);
+   });
+ }
 
 /** =====================
  *  初期セットアップ（読込/検証）
