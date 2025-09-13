@@ -56,6 +56,7 @@
   .btn.sm{padding:3px 6px;font-size:14px;border-radius:6px}
   .btn.warn{border-color:var(--danger);color:#d00000}
   .hidden{display:none !important}
+  .hint.bad{ color: var(--danger, #c33); }
 /* 左ペインの行配分 */
 .leftpane{
   grid-column:1 / span 1; padding:4px;

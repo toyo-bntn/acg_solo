@@ -17,7 +17,7 @@
       <li>ACGの一人回し用の非公式サイトです．</li>
       <li>ACGビルダーで保存したJSON（<code>mainDeck</code> / <code>territoryDeck</code>）を選択してください。</li>
       <li>デッキ枚数：<code>基礎デッキ(mainDeck): 40枚以上</code>, <code>領土デッキ(territoryDeck): 10枚</code></li>
-      <li>カード画像 <code>./images/&lt;カードナンバー&gt;.*</code>.（裏面<code>./images/Back.*</code>，トークン<code>./images/token.*</code>）</li>
+      <li>カード画像 <code>./images/&lt;カードナンバー&gt;.*</code>.（裏面：<code>./images/Back.*</code>，トークン：<code>./images/token.*</code>）</li>
     </div>
     <div class="rows">
       <div class="twoCol">
@@ -25,7 +25,7 @@
           <button class="btn" id="pickDeckBtn">デッキJSONを選ぶ</button>
           <span id="deckChosen" class="chip hidden"></span>
         </div>
-        <div class="hint">※<button class="btn sm" id="loadDefaultDeckBtn">deck_list_kimesai.json 読込</button></div>
+        <div class="hint">※<button class="btn sm" id="loadDefaultDeckBtn">お試し（deck_list_kimesai.json 読込）</button></div>
       </div>
       <div class="twoCol">
         <div>
@@ -34,7 +34,14 @@
           <span id="cardListChosen" class="chip hidden"></span>
         </div>
         <div class="hint" id="cardListStatus">未読込</div>
+      <div class="row" style="align-items:center; gap:8px;">
+        <span>imagesを選択してください</span>
+        <input type="file" id="imagesDirInput" class="hidden" webkitdirectory directory multiple>
+        <button class="btn sm" id="btnPickImages">選択</button>
+        <span id="imagesStatus" class="hint bad hidden">カード画像がありません</span>
       </div>
+      </div>
+
       <div style="display:flex; gap:8px; justify-content:flex-end">
         <button class="btn btn-lg primary" id="startBtn" disabled>読み込んで開始</button>
       </div>
