@@ -26,6 +26,8 @@ index.html, style.css, script.js, card_list.json で構成されています．
 - `card_list.json` : カード情報（ブースター2弾まで．PRは含まず）
 - `deck_list_kimesai.json` : お試し用のデッキJSON(キメラサイクル)
 - `images_setup/`: 画像アセットが必要な方向け（pythonスクリプト）
+- `images_setup/Back.png`: 裏面の画像．これをimages/に入れると裏面として利用できます．
+- `images_setup/token.png`: トークンの画像．裏面と同様に使ってもよい．
 
 ## ライセンス
 このプロジェクトは [MIT License](./LICENSE) のもとで公開されています。
