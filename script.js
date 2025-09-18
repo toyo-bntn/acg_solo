@@ -4,6 +4,9 @@
 const $ = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 const logBox = $('#logBox');
+// const bind = (sel, type, handler) => document.querySelector(sel)?.addEventListener(type, handler);
+let SIDEDECK_TARGET = 0;
+
 function log(msg){
   const t = new Date();
   const hh = String(t.getHours()).padStart(2,'0');
@@ -30,25 +33,9 @@ function pad3(n){ return String(n).padStart(3,'0'); }
 function randomSeed(){ return Math.floor(Math.random()*1e9); }
 
 const CARD_IMG_CACHE = {};               // cardNo → 解決済み画像URLをキャッシュ
-const CARD_IMG_EXT_ORDER = ['jpg','png','webp','jpeg']; // 実ファイルに合わせて順序調整
-function resolveCardImage(cardNo){
-  // 既に確定済みなら即返す
-  if (CARD_IMG_CACHE[cardNo]) return Promise.resolve(CARD_IMG_CACHE[cardNo]);
-
-  const candidates = CARD_IMG_EXT_ORDER.map(ext => `images/${cardNo}.${ext}`);
-  return new Promise((resolve, reject)=>{
-    (function tryNext(i){
-      if (i >= candidates.length) return reject(new Error('not found'));
-      const test = new Image();
-      test.onload = ()=>{ CARD_IMG_CACHE[cardNo] = candidates[i]; resolve(candidates[i]); };
-      test.onerror = ()=> tryNext(i+1);
-      test.src = candidates[i];
-    })(0);
-  });
-}
 
 // === Images picker support ===
-const IMG_EXTS = ["png", "jpg", "jpeg", "webp", "gif"];
+const IMG_EXTS = ["webp","png"];
 
 const imageStore = {
   // "picker": フォルダ選択, "auto": ./images 推定
@@ -141,13 +128,13 @@ function trySetImgSequential(imgEl, urls) {
 
 /* ── p1p1 カウンターを “+2/+2” “-1/-1” 形式に整形 ──────────── */
 function fmtP1P1(n){
-  const sign = n > 0 ? '+' : '';         // 正ならプラス記号、負ならそのまま
+  const sign = n > 0 ? '+' : '';         
   return `${sign}${n}/${sign}${n}`;
 }
 
 /* ── [+1] カウンターを “[+3]” 形式に整形 ───────────────── */
 function fmtPlus1(n){
-  const sign = n > 0 ? '+' : '';         // 負はめったに使わないが一応対応
+  const sign = n > 0 ? '+' : '';        
   return `[${sign}${n}]`;
 }
 
@@ -186,9 +173,6 @@ function applySquareBox(el){
     }
   }
 }
-function applyRotation(cardEl, rot){
-  cardEl.style.setProperty('--rot', (((rot%360)+360)%360) + 'deg');
-}
 function refreshCardMetrics(){
   const cs = getComputedStyle(document.documentElement);
   const w = parseInt(cs.getPropertyValue('--card-w')) || 92;
@@ -209,29 +193,30 @@ function displayName(card){
  *  データと状態
  *  ===================== */
 let CARD_DB = {}; // カードナンバー→情報
-let CARD_BACKS = ['png','jpg','jpeg','webp'].map(ext=>`./images/Back.${ext}`);
+let CARD_BACKS = ['webp','png'].map(ext=>`./images/Back.${ext}`);
 let SEED = randomSeed();
 let INITIAL_RETURN_LEFT = 0; // 初期2枚戻しの残回数
 
 const ZONES = {
   DECK: [], HAND: [], BATTLEFIELD: [], GRAVE: [], BANISH: [], FREE: [],
-  T_DECK: [], T_FIELD: []
+  T_DECK: [], T_FIELD: [], SIDEDECK: [],
 };
 
 const allowedMoves = {
-  DECK:        ['HAND','BATTLEFIELD','GRAVE','BANISH','FREE'],
+  DECK:        ['HAND','BATTLEFIELD','GRAVE','BANISH','FREE','SIDEDECK'],
   HAND:        ['BATTLEFIELD','GRAVE','BANISH','DECK','FREE'],
   BATTLEFIELD: ['HAND','GRAVE','BANISH','FREE', 'DECK'],
   GRAVE:       ['HAND','DECK','BANISH','FREE','BATTLEFIELD'], 
   BANISH:      ['HAND','GRAVE','DECK','FREE','BATTLEFIELD'],   
-  T_DECK:      ['T_FIELD','FREE','GRAVE','BANISH'],
-  T_FIELD:     ['GRAVE','BANISH','FREE','T_DECK'],
-  FREE:        ['HAND','BATTLEFIELD','GRAVE','BANISH','DECK']
+  T_DECK:      ['T_FIELD','GRAVE','BANISH'],
+  T_FIELD:     ['GRAVE','BANISH','T_DECK'],
+  FREE:        ['HAND','BATTLEFIELD','GRAVE','BANISH','DECK', 'SIDEDECK'],
+  SIDEDECK:    ['DECK','FREE'],
 };
 
 let selectedUID = null;
-// ★ ダブルクリック判定の猶予（ミリ秒）を好きに設定
-const DBLCLICK_MS = 280;
+// ★ ダブルクリック判定の猶予（ミリ秒）を好きに設定 
+const DBLCLICK_MS = 190;
 
 // DOM 準備後に初期化（既存の起動処理にぶら下げてOK）
 document.addEventListener("DOMContentLoaded", () => {
@@ -261,319 +246,12 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-// ===== Recording / Replay: CLEAN SINGLE IMPLEMENTATION =====
-
-// --- Globals ---
-let isRecording = false;          // recording flag
-let RECORDED_INIT = null;         // initial snapshot at record start
-let ACTION_LOG = [];              // action list
-let RECORD_SUSPEND = 0;           // reentrancy guard (disable logging during replay)
-
-const replay = { idx:0, timer:null, rate:1, isPlaying:false };
-
-// --- Utils (assumes $ and $$ helpers exist in your file) ---
-function snapshotState(){
-  const snap = {};
-  for(const z of Object.keys(ZONES)){
-    snap[z] = ZONES[z].map(c=>({
-      uid:c.uid, cardNo:c.cardNo, name:c.name,
-      zone:z, isToken:!!c.isToken,
-      faceUp:!!c.faceUp, rot:c.rot|0,
-      counters: {...(c.counters||{})}
-    }));
-  }
-  return snap;
-}
-function restoreState(snap){
-  for(const z of Object.keys(ZONES)) ZONES[z].length = 0;
-  let max = 0;
-  for(const z of Object.keys(snap)){
-    for(const s of snap[z]){
-      const c = createCardInstance(s.cardNo, z, true, {name:s.name, isToken:s.isToken});
-      c.uid = s.uid; c.faceUp = s.faceUp; c.rot = s.rot|0; c.counters = {...(s.counters||{})};
-      ZONES[z].push(c);
-      const n = +String(c.uid).replace(/[^\d]/g,'') || 0; if(n>max) max = n;
-    }
-  }
-  if(typeof uidCounter!=='undefined') uidCounter = Math.max(uidCounter, max);
-  renderAll();
-}
-
-function pushAction(type, payload){
-  if(!isRecording || RECORD_SUSPEND>0) return;
-  if(!RECORDED_INIT) RECORDED_INIT = snapshotState();
-  ACTION_LOG.push({ type, ...payload, t: Date.now() });
-}
-function withRecordSuspended(fn){
-  RECORD_SUSPEND++; try{ return fn(); } finally{ RECORD_SUSPEND--; }
-}
-
-// --- Wrap mutating functions to log actions ---
-const _origMove = moveCardTo;
-moveCardTo = function(uid, to){
-  const c = findCard(uid); const from = c?.zone;
-  const rv = _origMove(uid, to);
-  if(c) pushAction('move', { uid, from, to });
-  return rv;
-};
-
-const _origFace = toggleFace;
-toggleFace = function(uid){
-  _origFace(uid);
-  const c = findCard(uid); if(c) pushAction('face', { uid, faceUp:c.faceUp });
-};
-
-const _origTap = toggleTap;
-toggleTap = function(uid, deg=90){
-  _origTap(uid, deg);
-  const c = findCard(uid); if(c) pushAction('tap', { uid, rot:c.rot|0 });
-};
-
-const _origCtr = setCounter;
-setCounter = function(uid, typ, val){
-  _origCtr(uid, typ, val);
-  pushAction('ctr', { uid, typ, val });
-};
-
-const _origDraw = drawFromMain;
-drawFromMain = function(){
-  const top = ZONES.DECK[0];
-  const rv = _origDraw();
-  if(top){ const c = findCard(top.uid); if(c) pushAction('move', { uid:c.uid, from:'DECK', to:'HAND' }); }
-  return rv;
-};
-
-const _origDrawT = (typeof drawFromTDeck==='function') ? drawFromTDeck : null;
-if(_origDrawT){
-  drawFromTDeck = function(){
-    const top = ZONES.T_DECK[0];
-    const rv = _origDrawT();
-    if(top){ const c = findCard(top.uid); if(c) pushAction('move', { uid:c.uid, from:'T_DECK', to:'T_FIELD' }); }
-    return rv;
-  };
-}
-
-if(typeof createToken === 'function'){
-  const _origToken = createToken;
-  createToken = function(){
-    const c = _origToken();
-    if(c) pushAction('token', { uid:c.uid, zone:c.zone||'FREE' });
-    return c;
-  };
-}
-
-// --- Save / Load ---
-function saveReplayJson(){
-  const data = { init: RECORDED_INIT || snapshotState(), actions: ACTION_LOG };
-  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = 'acg_replay.json'; a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function loadReplayJson(obj){
-  RECORDED_INIT = obj.init; ACTION_LOG = obj.actions || [];
-  replay.idx = 0; replay.rate = 1; replay.isPlaying = false;
-  const seek = document.getElementById('replaySeek');
-  const stat = document.getElementById('replayStatus');
-  if(seek){ seek.max = ACTION_LOG.length; seek.value = 0; }
-  if(stat){ stat.textContent = `0 / ${ACTION_LOG.length}`; }
-  gotoIndex(0); // show initial position immediately
-}
-
-// --- Apply / Seek / Play ---
-function applyAction(a){
-  if(!a) return;
-  withRecordSuspended(()=>{
-    switch(a.type){
-      case 'move':  _origMove(a.uid, a.to); break;
-      case 'face':  { const c=findCard(a.uid); if(c){ c.faceUp=a.faceUp; renderAll(); } } break;
-      case 'tap':   { const c=findCard(a.uid); if(c){ c.rot=a.rot|0; renderAll(); } } break;
-      case 'ctr':   _origCtr(a.uid, a.typ, a.val); break;
-      case 'token': { if(typeof createToken==='function'){ const t = createToken(); if(t){ t.uid=a.uid; renderAll(); } } } break;
-      case 'shuffle': {
-        const zone = a.zone, arr = ZONES[zone];
-        if(arr && a.order?.length===arr.length){
-          const map = Object.fromEntries(arr.map(c=>[c.uid, c]));
-          ZONES[zone] = a.order.map(uid=>map[uid]).filter(Boolean);
-          renderAll();
-        }
-        break;
-      }
-    }
-  });
-}
-
-function gotoIndex(n){
-  n = Math.max(0, Math.min(n, ACTION_LOG.length));
-  withRecordSuspended(()=> restoreState(RECORDED_INIT) );
-  for(let i=0;i<n;i++) applyAction(ACTION_LOG[i]);
-  replay.idx = n;
-  const seek = document.getElementById('replaySeek');
-  const stat = document.getElementById('replayStatus');
-  if(seek) seek.value = n;
-  if(stat) stat.textContent = `${n} / ${ACTION_LOG.length}`;
-}
-
-function playStep(){
-  if(replay.idx >= ACTION_LOG.length){ replay.isPlaying=false; replay.timer=null; return; }
-  applyAction(ACTION_LOG[replay.idx++]);
-  const seek = document.getElementById('replaySeek');
-  const stat = document.getElementById('replayStatus');
-  if(seek) seek.value = replay.idx;
-  if(stat) stat.textContent = `${replay.idx} / ${ACTION_LOG.length}`;
-  replay.timer = setTimeout(playStep, 500 / replay.rate);
-}
-
-// --- UI wiring ---
-function toggleRecording(){
-  const btn = document.getElementById('btnRecord');
-  isRecording = !isRecording;
-  if(isRecording){
-    ACTION_LOG = [];
-    RECORDED_INIT = snapshotState();
-    if(btn){ btn.textContent = '■ 記録停止'; btn.classList.add('recording'); }
-    log('記録を開始しました');
-  }else{
-    if(btn){ btn.textContent = '● 記録開始'; btn.classList.remove('recording'); }
-    saveReplayJson();
-    log('記録を停止して JSON を保存しました');
-  }
-}
-
-document.getElementById('btnRecord')?.addEventListener('click', toggleRecording);
-
-document.getElementById('btnReplay')?.addEventListener('click', ()=>{
-  document.getElementById('replayPanel')?.classList.toggle('hidden');
-});
-document.getElementById('btnReplayClose')?.addEventListener('click', ()=>{
-  document.getElementById('replayPanel')?.classList.add('hidden');
-});
-
-document.getElementById('btnReplayOpen')?.addEventListener('click', ()=> document.getElementById('replayFile')?.click());
-document.getElementById('replayFile')?.addEventListener('change', (e)=>{
-  const f = e.target.files?.[0]; if(!f) return;
-  const r = new FileReader();
-  r.onload = ev => { try{ loadReplayJson(JSON.parse(ev.target.result)); } catch(err){ alert('JSON読込失敗: '+err.message); } };
-  r.readAsText(f, 'UTF-8');
-});
-
-document.getElementById('btnPlay')?.addEventListener('click', ()=>{
-  if(!RECORDED_INIT){ alert('先にログ(JSON)を読み込むか、記録を停止して保存してください'); return; }
-  if(replay.isPlaying) return;
-  gotoIndex(0);
-  replay.isPlaying = true; playStep();
-});
-
-document.getElementById('btnPause')?.addEventListener('click', ()=>{
-  replay.isPlaying = false; if(replay.timer){ clearTimeout(replay.timer); replay.timer=null; }
-});
-
-document.getElementById('btnStepNext')?.addEventListener('click', ()=>{
-  replay.isPlaying = false; if(replay.timer){ clearTimeout(replay.timer); replay.timer=null; }
-  if(replay.idx < ACTION_LOG.length){ applyAction(ACTION_LOG[replay.idx++]); }
-  const seek = document.getElementById('replaySeek');
-  const stat = document.getElementById('replayStatus');
-  if(seek) seek.value = replay.idx; if(stat) stat.textContent = `${replay.idx} / ${ACTION_LOG.length}`;
-});
-
-document.getElementById('btnStepPrev')?.addEventListener('click', ()=>{
-  replay.isPlaying = false; if(replay.timer){ clearTimeout(replay.timer); replay.timer=null; }
-  gotoIndex(Math.max(0, replay.idx-1));
-});
-
-document.getElementById('replaySeek')?.addEventListener('input', (e)=>{
-  const n = +e.target.value|0; gotoIndex(n);
-});
-
-document.querySelectorAll('.rate[data-rate]')?.forEach(b=>{
-  b.addEventListener('click', ()=>{
-    replay.rate = parseFloat(b.dataset.rate||'1')||1;
-    document.querySelectorAll('.rate[data-rate]').forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
-  });
-});
-
-
-// ===== UI =====
-// 進捗HUD
-function updateReplayHUD(){
-  $('#replaySeek').max = ACTION_LOG.length;
-  $('#replaySeek').value = replay.idx;
-  $('#replayStatus').textContent = `${replay.idx}/${ACTION_LOG.length}`;
-}
-
-// ▷ ↔ ▮▮ トグル
-$('#btnPlayToggle')?.addEventListener('click', ()=>{
-  if(!RECORDED_INIT){
-    alert('先にログ(JSON)を読み込むか、記録を停止して保存してください');
-    return;
-  }
-  if(replay.isPlaying){
-    replay.isPlaying = false;
-    if(replay.timer){ clearTimeout(replay.timer); replay.timer=null; }
-    $('#btnPlayToggle').textContent = '▷';
-  }else{
-    replay.isPlaying = true;
-    $('#btnPlayToggle').textContent = '▮';
-    playStep();
-  }
-});
-
-$('#btnStepNext')?.addEventListener('click', ()=>{
-  replay.isPlaying=false; if(replay.timer){ clearTimeout(replay.timer); replay.timer=null; }
-  if(replay.idx < ACTION_LOG.length){ applyAction(ACTION_LOG[replay.idx++]); }
-  updateReplayHUD();
-});
-$('#btnStepPrev')?.addEventListener('click', ()=>{
-  replay.isPlaying=false; if(replay.timer){ clearTimeout(replay.timer); replay.timer=null; }
-  gotoIndex(Math.max(0, replay.idx-1));
-  updateReplayHUD();
-});
-$('#replaySeek')?.addEventListener('input', e=>{
-  const n = +e.target.value|0;
-  replay.isPlaying=false; if(replay.timer){ clearTimeout(replay.timer); replay.timer=null; }
-  gotoIndex(n);
-  updateReplayHUD();
-});
-
-// リプレイパネルのドラッグ化
-(function enableReplayDrag(){
-  const panel = document.getElementById('replayPanel');
-  if(!panel) return;
-  let sx=0, sy=0, left=0, top=0, dragging=false;
-
-  // ヘッダー行をハンドルに
-  const handle = panel.querySelector('.row');
-  (handle||panel).style.cursor = 'move';
-
-  (handle||panel).addEventListener('mousedown', (e)=>{
-    dragging = true;
-    const r = panel.getBoundingClientRect();
-    sx = e.clientX; sy = e.clientY;
-    left = r.left; top = r.top;
-    panel.style.right = 'auto'; // 左上原点で動かすため
-    panel.style.bottom = 'auto';
-    e.preventDefault();
-  });
-  window.addEventListener('mousemove', (e)=>{
-    if(!dragging) return;
-    const nx = left + (e.clientX - sx);
-    const ny = top  + (e.clientY - sy);
-    panel.style.left = Math.max(0, nx) + 'px';
-    panel.style.top  = Math.max(0, ny) + 'px';
-  });
-  window.addEventListener('mouseup', ()=> dragging=false);
-})();
-
-// ===== Recording / Replay: END =====
-
 /** =====================
  *  画像解決（拡張子フォールバック）
  *  ===================== */
 function imageSrcForCardNo(cardNo){
   if(cardNo === 'TOKEN'){
-    return ['./images/token.png','./images/token.jpg','./images/token.jpeg','./images/token.webp'];
+    return ['./images/token.webp', './images/token.png'];
   }
   const base = './images/' + cardNo;
   return IMG_EXTS.map(ext => `${base}.${ext}`);
@@ -602,11 +280,12 @@ function idToCardNoTerr(id){
 let uidCounter = 0;
 function makeUID(){ return 'c' + (++uidCounter) + '_' + Math.random().toString(36).slice(2,7); }
 
+const UID_MAP = new Map(); // uid -> card
 function createCardInstance(cardNo, srcZone, faceUp=true, extra={}){
   const info = CARD_DB[cardNo] || null;
-  return {
-    uid: makeUID(),
-    cardNo,
+  const obj ={
+    uid: makeUID(), 
+    cardNo, 
     name: info ? info['カード名'] : cardNo,
     faceUp: !!faceUp,
     rot: 0,
@@ -615,6 +294,8 @@ function createCardInstance(cardNo, srcZone, faceUp=true, extra={}){
     isToken: (cardNo === 'TOKEN'),
     ...extra
   };
+  UID_MAP.set(obj.uid, obj);
+  return obj;
 }
 
 function createToken(){
@@ -634,11 +315,21 @@ function renderAll(){
   renderZone('T_DECK', $('#tDeck'), {row:true, faceDown:false});
   renderZone('GRAVE', $('#grave'), {column:true});
   renderZone('BANISH', $('#banish'), {column:true});
+
+  const sideCont = document.getElementById('sideDeck');
+  if (sideCont) {
+    renderZone('SIDEDECK', sideCont, {row:true, faceDown:false});
+  }
   $('#deckCountChip').textContent = '基礎デッキ: ' + ZONES.DECK.length;
   $('#tDeckCountChip').textContent = '領土デッキ: ' + ZONES.T_DECK.length;
   updateDeckTitleCounts();
 }
 
+// 例: 読み込んだ deck JSON から算出する関数（reserveDeck の合計）
+function sideTargetFrom(deck){
+  const obj = deck.reserveDeck||{};
+  return Object.values(obj).reduce((s,c)=>s+(c|0),0);
+}
 
 // ★ 見出しに「基礎デッキ：n」「領土：n」を出す
 function updateDeckTitleCounts(){
@@ -655,9 +346,51 @@ function updateDeckTitleCounts(){
   // 領土デッキ（「領土：10」を表示）
   const h3TerrDeck = document.querySelector('.zone[data-zone="T_DECK"] > h3');
   if(h3TerrDeck){
-    h3TerrDeck.textContent = '領土：' + ZONES.T_DECK.length;
+    h3TerrDeck.textContent = '領土デッキ：' + ZONES.T_DECK.length;
+  }
+  // デッキ読込後:
+  if (loadedDeckData){
+    SIDEDECK_TARGET = sideTargetFrom(loadedDeckData);
+  }
+    const cur = ZONES.SIDEDECK.length|0;
+  // サイドデッキ：枚数と「残り/超過」
+  const h3Side = document.querySelector('.zone[data-zone="SIDEDECK"] > h3');
+  const btnSideClose = document.getElementById('btnSideClose');
+  const btnSide = document.getElementById('btnSide');
+  if (h3Side) {
+    const target = (typeof SIDEDECK_TARGET === 'number' ? SIDEDECK_TARGET : 0);
+    let html = `サイドデッキ：${cur}`;
+    const diff = target - cur;
+    if (target > 0) { 
+      if (diff > 0) html += ` <span class="dangerText">＜残り：${diff}＞</span>`;
+      else if (diff < 0) html += ` <span class="dangerText">＜超過：${-diff}＞</span>`;
+    }
+    const newH3 = h3Side.cloneNode(true);
+    newH3.innerHTML = html;
+    newH3.appendChild(h3Side.querySelector('.toolbar'));
+    h3Side.parentNode.replaceChild(newH3, h3Side);
+    // diffが0の場合にのみボタンを有効化
+    if (btnSideClose) {
+      if (diff === 0) {
+        btnSideClose.removeAttribute('disabled');
+        btnSideClose.style.pointerEvents = ''; // CSSで無効化している場合にクリックを許可
+      } else {
+        btnSideClose.setAttribute('disabled', 'disabled');
+        btnSideClose.style.pointerEvents = 'none'; // クリックイベントを無効化
+      }
+    }
+      if (btnSide) {
+      if (diff === 0) {
+        btnSide.removeAttribute('disabled');
+        btnSide.style.pointerEvents = ''; // CSSで無効化している場合にクリックを許可
+      } else {
+        btnSide.setAttribute('disabled', 'disabled');
+        btnSide.style.pointerEvents = 'none'; // クリックイベントを無効化
+      }
+    }
   }
 }
+
 
 function cardElement(card){
   const el = document.createElement('div');
@@ -798,8 +531,8 @@ function setCounter(uid, typ, val){
   renderAll();
 }
 
-/** 汎用：縦に5枚ずつ積んで、6枚目は右の新しい列へ（オーバーラップは任意） */
-function renderPileColumns(container, cards, {maxPerCol=5, colGap=12, overlap=0, startX=0}={}){
+/** 縦に5枚ずつ積んで、6枚目は右の新しい列へ */
+function renderPileColumns(container, cards, {maxPerCol=5, colGap=12, overlap=1, startX=0}={}){
   // ステップ計算（overlap=0.3 なら 70%刻み、0なら等間隔=カード高）
   const stepY = Math.round(CARD_H * (1 - overlap));
   // クリア
@@ -831,13 +564,32 @@ function renderPileColumns(container, cards, {maxPerCol=5, colGap=12, overlap=0,
   return { usedHeight, usedWidth, rows, usedCols, stepY };
 }
 
+/**
+ * カードの配列を「カード名かな」の昇順でソートします。
+ * @param {Array<object>} cards - ソート対象のカードオブジェクトの配列
+ * @returns {Array<object>} ソート済みの新しい配列
+ */
+function sortCardsByKana(cards) {
+  // 元の配列を変更しないように、コピーを作成してからソートします
+  return [...cards].sort((a, b) => {
+    const cardInfoA = CARD_DB[a.cardNo] || {};    // 各カードのカードナンバーを使って、CARD_DBから詳細情報を取得
+    const cardInfoB = CARD_DB[b.cardNo] || {};
+
+    const kanaA = cardInfoA['カード名かな'] || a.name || '';    // 「カード名かな」を取得します。もし存在しない場合は、通常のカード名で代用します
+    const kanaB = cardInfoB['カード名かな'] || b.name || '';
+
+    return kanaA.localeCompare(kanaB, 'ja');    // 「かな」を日本語のルールで比較します
+  });
+}
+
 function renderZone(zoneName, container, opt={}){
-  if(zoneName === 'DECK'){
+  if(zoneName === 'DECK' || zoneName === 'SIDEDECK'){
     container.classList.add('deckStrip');
+    container.classList.remove('tdeckStrip','handStrip');
   }else if(zoneName === 'T_DECK'){
     container.classList.add('tdeckStrip');
+    container.classList.remove('deckStrip','handStrip');
   }else{
-    container.classList.remove('deckStrip','tdeckStrip');
     container.classList.remove('deckStrip','tdeckStrip','handStrip');
   } 
   // 並び替えオプション
@@ -846,19 +598,24 @@ function renderZone(zoneName, container, opt={}){
   
   // （任意のソート：トグルがONなら並べ替え）
   if(zoneName==='HAND' && $('#sortHand')?.checked){
-    arr = [...arr].sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    arr = sortCardsByKana(arr);
+  }
+  if(zoneName==='DECK' && $('#sortDeck')?.checked){
+    arr = sortCardsByKana(arr);
   }
   if(zoneName==='T_FIELD' && $('#sortTerritory')?.checked){
-    arr = [...arr].sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    arr = sortCardsByKana(arr);
+  }
+  if(zoneName==='SIDEDECK' && $('#sortSide')?.checked){
+    arr = sortCardsByKana(arr);
   }
 
   // 1) 横並び：戦場/手札/領地
-  if(zoneName==='BATTLEFIELD' || zoneName==='HAND' || zoneName==='T_FIELD'){
+  if(zoneName==='BATTLEFIELD' || zoneName==='HAND' || zoneName==='T_FIELD' || zoneName==='SIDEDECK'){
     container.classList.remove('pileCols');     // 保険：縦積みクラスを外す
     container.classList.add('hrow');
     if (zoneName === 'HAND') container.classList.add('handStrip');
     else container.classList.remove('handStrip');
-
     container.innerHTML = '';
     for(const c of arr){
       const el = cardElement(c);
@@ -870,20 +627,26 @@ function renderZone(zoneName, container, opt={}){
     return; // 横並びはここで終了
   }
 
-    // =========================
+  
+  // =========================
   // 2) 縦5枚ずつ → 右に列追加：墓地/除外/フリー
   // =========================
   if(zoneName==='GRAVE' || zoneName==='BANISH' || zoneName==='FREE'){
-    // FREE だけは欄を縦に拡張したい → overlapはお好みで
-    const overlap = (zoneName==='FREE') ? 0.40 : 0.40; // 必要なら 0 にすれば重なり無
+    const overlap  = (typeof opt.overlap === 'number')
+                      ? opt.overlap
+                      : (zoneName === 'FREE' ? 0.50 : 0.50);    // 例：FREE は薄めに
+    const colGap   = (typeof opt.colGap === 'number') ? opt.colGap : 12;
+    const maxPerCol= (typeof opt.maxPerCol === 'number') ? opt.maxPerCol : 5;
+    const startX   = (typeof opt.startX === 'number') ? opt.startX : 0;
+
     const { usedHeight, usedWidth } =
-      renderPileColumns(container, arr, {maxPerCol:5, overlap, colGap:12});
+      renderPileColumns(container, arr, { maxPerCol, overlap, colGap, startX });
 
     // 幅は念のため最小幅をセット（横スクロールに頼らない）
     container.style.minWidth = usedWidth + 'px';
 
     // FREE は“縦スクロールではなく欄自体を拡張”する
-    if(zoneName==='FREE'){
+    if (zoneName==='FREE') {
       const zoneEl   = container.closest('.zone');          // FREEの親セクション
       const headerH  = zoneEl?.querySelector('h3')?.offsetHeight || 0;
       const padding  = 16;                                  // ゾーン内余白の概算
@@ -921,22 +684,15 @@ function renderZone(zoneName, container, opt={}){
 /** =====================
  *  選択・操作
  *  ===================== */
-function findCard(uid){
-  for(const z in ZONES){
-    const i = ZONES[z].findIndex(c=>c.uid===uid);
-    if(i>=0) return ZONES[z][i];
-  }
-  return null;
-}
+function findCard(uid){ return UID_MAP.get(uid) || null; }
 function removeCard(uid){
-  for(const z in ZONES){
-    const i = ZONES[z].findIndex(c=>c.uid===uid);
-    if(i>=0) return ZONES[z].splice(i,1)[0];
-  }
+  const c = UID_MAP.get(uid); if(!c) return null;
+  const arr = ZONES[c.zone]; const i = arr.findIndex(x=>x.uid===uid);
+  if (i>=0){ arr.splice(i,1); return c; }
   return null;
 }
 function clearSelection(){
-  document.querySelectorAll('.imgWrap.accent').forEach(el=> el.classList.remove('selected'));
+  document.querySelectorAll('.imgWrap.selected').forEach(el=> el.classList.remove('selected'));
   selectedUID = null;
   if (typeof updatePreview === 'function') updatePreview(null);
 }
@@ -1044,6 +800,9 @@ function toggleTap(uid){
 /** =====================
  *  ドラッグ＆ドロップ / ゾーン移動
  *  ===================== */
+function isToken(card){
+  return card.kind === 'token' || card.isToken === true || /token/i.test(card.number || '');
+}
 function onDragOver(ev){ ev.preventDefault(); }
 function onDrop(ev){
   ev.preventDefault();
@@ -1067,6 +826,20 @@ function moveCardTo(uid, newZone){
     // 元に戻す
     ZONES[from].push(c);
     renderAll();
+    return;
+  }
+    // ★ トークンは「墓地／除外／手札」に入った瞬間に消滅（カウンターも消す）
+   if (isToken(c) && (to === 'GRAVE' || to === 'BANISH' || to === 'HAND')) {
+    // カウンターをクリア（存在するキーは 0 に、最終的に空オブジェクトへ）
+    if (c.counters) {
+      for (const k of Object.keys(c.counters)) c.counters[k] = 0;
+    }
+    c.counters = {};
+    log(`${displayName(c)}を${from}→${to}（消滅）`);
+    // ゾーンへは積まない（=ゲーム状態から削除）
+    renderAll();
+    // プレビューは存在しないUIDになるので必要なら安全に無視
+    try { updatePreview(uid); } catch {}
     return;
   }
   // HAND→DECK の初期2枚戻し判定（ボトムへ）
@@ -1140,12 +913,12 @@ function initDraw7(){
   $('#initReturnLeft').textContent = INITIAL_RETURN_LEFT;
 }
 
-function resetBoardAndDraw7(){
+function resetBoard(){
   // トークンを消し、その他は対応デッキへ戻す
   function flushZone(fromArr, to){
     for(let i=fromArr.length-1;i>=0;i--){
       const c = fromArr[i];
-      if(c.isToken){ fromArr.splice(i,1); continue; } // トークンは消える
+      if(isToken(c)){ fromArr.splice(i,1); continue; } // トークンは消える
       c.rot=0; c.faceUp=true;
       if(c.counters){ c.counters.p1p1 = 0; c.counters.plus1 = 0; } // ★ カウンターをリセット
       c.zone = to;
@@ -1161,7 +934,7 @@ function resetBoardAndDraw7(){
   for(const arrName of ['T_FIELD','FREE']){
     for(let i=ZONES[arrName].length-1;i>=0;i--){
       const c = ZONES[arrName][i];
-      if(c.isToken){ ZONES[arrName].splice(i,1); continue; }
+      if(isToken(c)){ ZONES[arrName].splice(i,1); continue; }
       c.rot=0; c.faceUp=true;
       if(c.counters){ c.counters.p1p1 = 0; c.counters.plus1 = 0; } // ★ カウンターをリセット
       // 領土カード判定
@@ -1175,112 +948,12 @@ function resetBoardAndDraw7(){
   shuffle(ZONES.DECK);
   shuffle(ZONES.T_DECK);
   renderAll();
-  for(let i=0;i<7;i++) drawFromMain();
-  INITIAL_RETURN_LEFT = 2;
-  $('#initReturn').classList.remove('hidden');
+//  for(let i=0;i<7;i++) drawFromMain();
+  INITIAL_RETURN_LEFT = 0;
+  $('#initReturn').classList.toggle('hidden', INITIAL_RETURN_LEFT<=0);
   $('#initReturnLeft').textContent = INITIAL_RETURN_LEFT;
-  log('盤面リセット&7枚ドロー');
+//  log('盤面リセット');
 }
-
-/** =====================
- *  状態保存/読込・スクショ
- *  ===================== */
-function degToRad(d) { return (d * Math.PI) / 180; }
-
-function exportState(){
-  const data = {
-    seed: SEED,
-    initialReturnLeft: INITIAL_RETURN_LEFT,
-    zones: Object.fromEntries(Object.entries(ZONES).map(([k,arr])=>[k, arr.map(c=>({
-      uid:c.uid, cardNo:c.cardNo, name:c.name, faceUp:c.faceUp, rot:c.rot, counters:c.counters, isToken:c.isToken
-    }))]))
-  };
-  saveText('acg_state.json', JSON.stringify(data, null, 2));
-}
-function importState(file){
-  const r = new FileReader();
-  r.onload = ()=>{
-    try{
-      const data = JSON.parse(r.result);
-      SEED = data.seed || randomSeed();
-      INITIAL_RETURN_LEFT = data.initialReturnLeft||0;
-      for(const k in ZONES) ZONES[k] = [];
-      for(const [k,arr] of Object.entries(data.zones||{})){
-        ZONES[k] = (arr||[]).map(o=>({uid:o.uid||makeUID(), cardNo:o.cardNo, name:o.name, faceUp:!!o.faceUp, rot:o.rot|0, counters:o.counters||{p1p1:0,plus1:0}, zone:k, isToken:!!o.isToken}));
-      }
-      $('#initReturn').classList.toggle('hidden', INITIAL_RETURN_LEFT<=0);
-      $('#initReturnLeft').textContent = INITIAL_RETURN_LEFT;
-      renderAll();
-      log('状態を読み込みました');
-    }catch(e){
-      alert('読込に失敗しました: '+e.message);
-    }
-  };
-  r.readAsText(file);
-}
-// スクショ
- async function takeScreenshot(){
-   const root = document.documentElement;                 // ★ ページ全体
-   if (!window.html2canvas) {
-     alert('html2canvas が読み込めませんでした。オンラインで再試行してください。');
-     return;
-   }
-   // ページ全体の実寸
-  const w = Math.max(root.scrollWidth, document.body.scrollWidth, window.innerWidth);
-  const h = Math.max(root.scrollHeight, document.body.scrollHeight, window.innerHeight);
- 
-  // CSS変数からカード基準サイズを取得（正方形の一辺＝CARD_H）
-  const cs = getComputedStyle(root);
-  const CARD_W = parseInt(cs.getPropertyValue('--card-w')) || 92;
-  const CARD_H = parseInt(cs.getPropertyValue('--card-h')) || Math.round(CARD_W*132/92);
-
-   const canvas = await html2canvas(root, {
-     backgroundColor: '#0f1216',
-     scale: 2,
-     useCORS: true,
-     allowTaint: false,
-     imageTimeout: 15000,
-     windowWidth:  w,
-     windowHeight: h,
-     scrollX: 0,
-     scrollY: 0,
-     onclone: (doc) => {
-       // 撮影時だけ内部スクロール領域を全展開
-       doc.querySelectorAll('.wrap, .leftpane, .rightpane, main, .content, #infoText, #logBox')
-         .forEach(el => {
-           el.style.height   = 'auto';
-           el.style.maxHeight = 'none';
-           el.style.overflow  = 'visible';
-        // 行の高さが落ちないよう最低高さをカード一辺分確保
-        if (el.classList.contains('hrow') ||
-            el.classList.contains('handStrip') ||
-            el.classList.contains('deckStrip') ||
-            el.classList.contains('tdeckStrip')) {
-          el.style.minHeight = CARD_H + 'px';
-            }           
-         });
-      // 2) カードと画像の箱もクリッピング無効（回転×中央寄せ対策）
-      doc.querySelectorAll('.card, .imgWrap').forEach(el => {
-        el.style.overflow = 'visible';
-      });
-       // （任意）デバッグ：撮影時に当たり枠を出す
-       doc.querySelectorAll('.imgWrap').forEach(el=>{
-         el.style.outline = '1px dashed rgba(255,0,0,.4)';
-       });
-     }
-   });
- 
-
-
-   canvas.toBlob((blob) => {
-     const url = URL.createObjectURL(blob);
-     const a = document.createElement('a');
-     a.href = url;
-     a.download = 'acg_board.png';
-     a.click();
-     URL.revokeObjectURL(url);
-   });
- }
 
 /** =====================
  *  初期セットアップ（読込/検証）
@@ -1313,7 +986,6 @@ function validateDeck(deck){
   if(terrCount > 10) errs.push('領土デッキが10枚を超えています ('+terrCount+')');
   return errs;
 }
-
 function buildInitialZones(deck){
   // クリア
   for(const k in ZONES) ZONES[k] = [];
@@ -1322,7 +994,7 @@ function buildInitialZones(deck){
     const id = parseInt(idStr,10);
     const cardNo = idToCardNoMain(id);
     for(let i=0;i<(count|0);i++){
-      ZONES.DECK.push( createCardInstance(cardNo, 'DECK', true) );
+      ZONES.DECK.push(createCardInstance(cardNo, 'DECK', true));
     }
   }
   // territory
@@ -1330,11 +1002,17 @@ function buildInitialZones(deck){
     const id = parseInt(idStr,10);
     const cardNo = idToCardNoTerr(id);
     for(let i=0;i<(count|0);i++){
-      ZONES.T_DECK.push( createCardInstance(cardNo, 'T_DECK', true) );
+      ZONES.T_DECK.push(createCardInstance(cardNo, 'T_DECK', true));
     }
   }
-  // reserve は今回は読み込むだけ（表示しない）
-  // シャッフルはユーザ操作に任せる
+  // reserve (SIDEDECK)
+  for (const [idStr, count] of Object.entries(deck.reserveDeck || {})) {
+    const id = parseInt(idStr,10);
+    const cardNo = idToCardNoMain(id);
+    for(let i=0;i<(count|0);i++){
+      ZONES.SIDEDECK.push(createCardInstance(cardNo, 'SIDEDECK', true));
+    }
+  }
   renderAll();
 }
 
@@ -1408,7 +1086,7 @@ startBtn.onclick = ()=>{
   overlay.classList.add('hidden');
   SEED = randomSeed(); $('#seedView').textContent = SEED;
   buildInitialZones(loadedDeckData);
-  log('ゲーム開始。デッキ枚数: '+ZONES.DECK.length+' / 領土デッキ: '+ZONES.T_DECK.length);
+  log('ゲーム開始。基礎デッキ: '+ZONES.DECK.length+' / 領土デッキ: '+ZONES.T_DECK.length +'/サイドデッキ: '+ZONES.SIDEDECK.length);
 };
 
 /** =====================
@@ -1420,13 +1098,14 @@ $('#btnShuffleTerr').onclick = ()=>{ shuffle(ZONES.T_DECK); renderAll(); log('�
 $('#btnDrawFromTDeck').onclick = ()=> drawFromTDeck();
 $('#btnDraw1').onclick = ()=> drawFromMain();
 $('#btnInit7').onclick = ()=> initDraw7();
-$('#btnReset7').onclick = ()=> resetBoardAndDraw7();
-$('#btnExport').onclick = ()=> exportState();
-$('#btnImport').onclick = ()=> openFilePicker('.json', importState);
+$('#btnReset7').onclick = ()=> resetBoard();
+//$('#btnExport').onclick = ()=> exportState();
+//$('#btnImport').onclick = ()=> openFilePicker('.json', importState);
 $('#btnToken').onclick = ()=> createToken();
-$('#btnShot').onclick = ()=> takeScreenshot();
 $('#sortHand').onchange = ()=> renderAll();
 $('#sortTerritory').onchange = ()=> renderAll();
+$('#sortSide').onchange = ()=> renderAll();
+$('#sortDeck').onchange = ()=> renderAll();
 $('#btnReloadDeck').onclick = ()=>{
   openFilePicker('.json', (file)=>{
     const r = new FileReader();
@@ -1449,6 +1128,15 @@ $('#btnReloadDeck').onclick = ()=>{
     r.readAsText(file, 'UTF-8');
   });
 };
+$('#resetSideDeck').onclick = () => {
+    // ユーザーに確認を求めるダイアログを表示
+    if (confirm("サイドチェンジをリセット")) {
+        // 「OK」（確定）が押された場合の処理
+        buildInitialZones(loadedDeckData);
+        renderAll();
+    }
+    // 「キャンセル」が押された場合は何もしない
+};
 $('#btnDealToFree').onclick = ()=>{
   if(ZONES.DECK.length === 0){ log('デッキ切れ'); return; }
   const c = ZONES.DECK[0];            // shift() せずにUIDを取得
@@ -1458,7 +1146,14 @@ $('#btnDealToFree').onclick = ()=>{
   renderAll();
   log(`${displayName(moved||c)} を FREE へ`);
 };
-
+document.getElementById('btnSide')?.addEventListener('click', ()=>{
+  document.getElementById('sidePanel')?.classList.toggle('hidden');
+  renderAll(); // 開いた瞬間にSIDEDECKを描画＆枚数更新
+});
+document.getElementById('btnSideClose')?.addEventListener('click', ()=>{
+  document.getElementById('sidePanel')?.classList.add('hidden');
+});
+        
 /** =====================
  *  カウンターパレット → カードへドロップ
  *  ===================== */
@@ -1476,6 +1171,7 @@ document.addEventListener('drop', (e)=>{
   const dt = e.dataTransfer; if(!dt) return;
   const data = dt.getData('text/plain') || '';
   if(!data.startsWith('COUNTER:')) return;
+  if (!(e.target instanceof Element)) return;
   const target = e.target.closest('.card');
   if(!target) return;
   const uid = target.dataset.uid;
@@ -1504,9 +1200,11 @@ document.addEventListener('keydown', (e)=>{
   else if(k==='x'){ /* 表裏 */ if(selectedUID) toggleFace(selectedUID); e.preventDefault(); }
   else if(k==='f'){ /* 基デ→FREE */ 
     if(ZONES.DECK.length){
-      const c = ZONES.DECK.shift();
-      c.zone='FREE'; c.faceUp=true; ZONES.FREE.push(c);
-      renderAll(); log(`${displayName(c)} を基デ→FREE`);
+      const top = ZONES.DECK[0];
+      moveCardTo(top.uid, 'FREE'); // 統一
+      const moved = findCard(top.uid);
+      if (moved) { moved.faceUp = true; updatePreview(moved.uid); };
+      renderAll(); log(`${displayName(top)} を基デ→FREE`);
     }
     e.preventDefault();
   }

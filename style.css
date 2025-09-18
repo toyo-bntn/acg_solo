@@ -9,7 +9,7 @@
 
   /* 左ペイン3行の高さ（上:FREE / 中:プレビュー / 下:ログ）*/
   --left-free-row: auto;
-  --left-preview-row: 500px;  /* ←お好みで 420〜520 あたり */
+  --left-preview-row: 450px;  /* ←お好みで 420〜520 あたり */
   --left-log-row: 150px;
   --preview-big-height: 100px; /* プレビュー画像の高さ据え置き */
 
@@ -17,11 +17,15 @@
   --row-battle: minmax(160px, 160px);
   --row-hand: 170px;
   --row-decks: 180px;     /* 基礎デッキ / 領土デッキ */
-  --row-territory: 230px; /* 領地 */
+  --row-territory: 210px; /* 領地 */
   /* 横幅（同じ行内で T_DECK : T_FIELD の比率） */
-  --t-deck-width: 50%;         /* ← 領土デッキを細くしたいなら30〜40% */
+  --t-deck-width: 40%;         /* ← 領土デッキを細くしたいなら30〜40% */
   --card-w: 80px;                         /* ← ここを 84px, 80px などに */
   --card-h: calc(var(--card-w) * 1.4348); /* 92:132 の比率 ≒ 1.4348 */
+  --card-radius: 8px;
+  --card-border: 0px solid transparent;
+  --card-shadow: none;
+  --side-panel-width: 720px;
 }
 
   *{box-sizing:border-box}
@@ -51,9 +55,9 @@
   .pill{border:1px solid var(--border);background:var(--panel2);border-radius:999px;padding:2px 2px;font-size:14px}
   .pill.bad{border-color:var(--danger);color:#d60000; padding:0 0 0 8px}
   .chip{border:1px solid var(--border);background:var(--panel2);border-radius:999px;padding:3px 8px 3px 3px;font-size:14px;color:var(--muted)}
-  .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:2px;padding:2px 6px;cursor:pointer}
+  .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:2px;padding:2px 6px;cursor:pointer; font-size:16px}
   .btn:hover{border-color:var(--accent)}
-  .btn.sm{padding:3px 6px;font-size:14px;border-radius:6px}
+  .btn.sm{padding:1px 6px;font-size:14px;border-radius:6px}
   .btn.warn{border-color:var(--danger);color:#d00000}
   .hidden{display:none !important}
   .hint.bad{ color: var(--danger, #c33); }
@@ -136,6 +140,11 @@
   .zone[data-zone="T_DECK"] {
     width: var(--t-deck-width);
   }
+  .zone[data-zone="DECK"] .card,
+  .zone[data-zone="T_DECK"] .card,
+  .zone[data-zone="SIDEDECK"] .card { 
+    width:var(--card-w) !important; height:var(--card-h) !important; 
+  }
   aside{grid-column:3 / span 1; padding:4px; display:grid; grid-template-rows: 1fr 1fr; gap:4px;}
   .zone{background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:4px; display:flex; flex-direction:column; gap:2px; min-height:100px; overflow-x: auto;}
   .zone h3{margin:0; font-size:14px; color:var(--muted); display:flex; align-items:center; gap:2px; justify-content:space-between; padding: 0 0 0 6px }
@@ -155,7 +164,7 @@
 /* ★ 領地の重ね（20%） */
 #territory.hrow{ gap:0; } /* このゾーンだけ gap を 0 に */
 #territory .card{
-  margin-left: calc(var(--card-w) * -0.3);
+  margin-left: calc(var(--card-w) * -0.2);
 }
 #territory .card:first-child{
   margin-left: 0;
@@ -198,7 +207,7 @@
     background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.75) 50%);
     padding:1px 1px; font-size:12px; font-weight:700;
     border-radius:6px;
-    width: 65%;
+    width: 80%;
     text-align:center; 
   }
   .card.selected{outline:none !important; outline-offset:0px;box-shadow: none !important;}
@@ -225,11 +234,11 @@
   text-align:center;}
   .overlay{position:fixed; inset:0; background:rgba(6,8,11,.92); display:flex; align-items:center; justify-content:center; z-index:1000}
   .panel{width:min(800px, calc(100% - 24px)); background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:12px; margin: 2px}
-  .hint{font-size:14px; color:var(--muted)}
+  .hint{font-size:16px; color:var(--muted)}
   .rows{display:grid; gap:4px}
   .twoCol{display:grid; grid-template-columns:1fr auto; gap:4px; align-items:center}
   .danger{color:#ffb1b1}
-  .zone[data-zone="DECK"] .content, .zone[data-zone="T_DECK"] .content{padding:4px}
+  .zone[data-zone="DECK"] .content, .zone[data-zone="T_DECK"] .content{padding:2px}
   .small{transform:scale(.92); transform-origin:top left}
   .zone .hrow .card{cursor:grab}
   .zone .vstack .card{cursor:grab}
@@ -250,9 +259,11 @@
 @supports(selector(:has(.x))){
   .handStrip .card:has(.imgWrap.selected){ z-index: 10; }
 }
-  .deckStrip .card,
+  .deckStrip .card{
+    margin-left:-3%;
+}
   .tdeckStrip .card{
-    margin-left:-8%;
+    margin-left:-10%;
 }
 /* --- 前面制御の共通設定（HAND / DECK / T_DECK） --- */
 .handStrip .card,
@@ -294,14 +305,14 @@
 .pileCols{
   position: relative;
   display: block;
-  overflow: visible;       /* FREEは“欄を拡大”したいので縦スクロールにしない */
+  overflow: auto;       /* FREEは“欄を拡大”したいので縦スクロールにしない */
   min-height: var(--card-h)!important;   /* カード1枚ぶん */
 }
 .pileCols .card{
   position: absolute;      /* JSでleft/top/z-indexを与える */
 }
 .replayPanel{
-  position:fixed; right:12px; top:56px; width:250px;
+  position:fixed; width:250px;
   background:var(--panel); border:1px solid var(--border); border-radius:12px;
   padding:5px; z-index:9999; box-shadow:0 12px 30px rgba(0,0,0,.35);
 }
@@ -333,42 +344,68 @@
 /* 墓地・除外の枠（コンテナ）を自動伸縮に */
 .zone[data-zone="GRAVE"] .content,
 .zone[data-zone="BANISH"] .content{
-  height:auto;
+  height:auto ;
   max-height:none;
-  overflow:visible;
+  overflow:auto;
 }
 /* 列コンテナの最小高さ＝カード1枚ぶん（カードサイズ変数に追従） */
-.pileCols{ 
-  min-height: var(--card-h);
-  overflow: visible;           /* 内部スクロールを無効化 */
-}
+
 /* Start ボタンを他より大きく */
 .btn.btn-lg{ padding:10px 18px; font-size:18px; border-radius:10px; border-width:2px; }
 .btn.primary{ background:#fff; border-color:var(--accent); }
 .btn.primary:hover{ background:#fff; border-color:#ffffff; }
 
-/* リプレイ移動の可視化：移動中は白90%の被せ */
-.card.moving::after{
-  content:"";
-  position:absolute; inset:0;
-  background:rgba(255,255,255,.9); 
-  pointer-events:none;
+.dangerText{ color: var(--danger); font-weight: 700; }
+
+/* サイドデッキの小窓（非モーダル） */
+.sidePanel{
+  left:260px;               /* 右ではなく左に出す */
+  right:auto;
+  width: var(--side-panel-width);
+  z-index: 9998;           /* リプレイ小窓より少し下でもOK */
 }
-/* 追従アニメ（FLIP用、transformを滑らかに） */
-.card.moving{ will-change: transform; }
-/* リプレイ用フライアニメの最前面レイヤ */
-#replay-fly-layer{
-  position:fixed; inset:0; pointer-events:none; z-index: 2147483647;
+
+/* DECKと同じ“重なり”にするため、hrow の gap を0に上書き */
+.deckStrip.hrow { gap: 0}  
+#sideDeck .card{
+  margin-left: calc(var(--card-w) * -0.3);
 }
-/* 画面上を飛ぶ“ゴースト”カード */
-.card-ghost{
-  position:fixed; will-change: transform, top, left, width, height;
-  box-shadow: 0 10px 28px rgba(0,0,0,.35);
-  border-radius: 8px;
+#sideDeck .card:first-child{
+  margin-left: 0;
+} 
+/* サイドデッキ欄の余白微調整（任意） */
+#sidePanel .zone .content { padding: 2px; }
+
+#sideDeckTitle {
+  display: flex;
+  align-items: baseline; /* テキストのベースラインを揃える */
+  gap: 10px; /* 要素間の隙間 */
+  justify-content:flex-start !important;
 }
-/* 「ドラッグ中」の雰囲気（白90%の被せ） */
-.card-ghost::after{
-  content:""; position:absolute; inset:0;
-  background: rgba(255,255,255,.9);
-  pointer-events:none;
+
+#btnSideClose[disabled], #btnSide[disabled] {
+  opacity: 0.5; /* 透明度を下げて無効状態を表現 */
+  cursor: not-allowed; /* マウスポインタを禁止アイコンにする */
 }
+#resetSideDeck {
+  background-color:var(--accent);
+  color :var(--bg);
+}
+
+/* === Replay Ghost Animation (ghost move across zones) === */
+.ghostCard{
+position: fixed; /* viewport 基準で矩形合わせが簡単 */
+left: 0; top: 0;
+width: var(--card-w);
+height: var(--card-h);
+pointer-events: none;
+z-index: 10000;
+will-change: transform, opacity;
+transition: transform 380ms ease, opacity 120ms ease-in;
+}
+.ghostCard img{
+width: 100%; height: 100%; display: block; object-fit: cover;
+border-radius: 10px;
+}
+/* ゴースト移動中、目的地の実体カードは一時的に不可視にする */
+.card.ghost-hidden{ opacity: 0; }

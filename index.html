@@ -22,9 +22,10 @@
     <div class="hint">
       <ul style="margin:0px 0 0 9px">
       <li>ACGの一人回し用の非公式サイトです．</li>
-      <li>ACGビルダーで保存したJSON（<code>mainDeck</code> / <code>territoryDeck</code>）を選択してください。</li>
-      <li>デッキ枚数：<code>基礎デッキ(mainDeck): 40枚以上</code>, <code>領土デッキ(territoryDeck): 10枚</code></li>
-      <li>カード画像をまとめたフォルダをローカルで作成し，選択してください．<code>./images/&lt;カードナンバー&gt;.*</code>.（裏面：<code>./images/Back.*</code>，トークン：<code>./images/token.*</code>）</li>
+      <li>ACGビルダーで保存したJSONを選択してください。</li>
+      <li>（<code>deck_list.json :</code> <code>mainDeck</code> / <code>territoryDeck</code>/ <code>reserveDeck</code>）</li>
+      <li>デッキ枚数：<code>基礎デッキ: 40枚以上</code>, <code>領土デッキ: 10枚</code>, <code>サイドデッキ: 15枚以下</code></li>
+      <li>カード画像をまとめたフォルダをローカルで作成し，読み込ませてください． <code>./images/&lt;カードナンバー&gt;.*</code>.（裏面：<code>./images/Back.*</code>，トークン：<code>./images/token.*</code>）</li>
     </div>
     <div class="rows">
       <div class="twoCol">
@@ -35,7 +36,7 @@
         </div>
         <div class="hint" id="cardListStatus">未読込</div>
       <div class="hint" style="align-items:center; gap:8px;">
-        <span>カード画像のフォルダ(images)を選択してください</span>
+        <span>カード画像のフォルダ（images）を選択してください</span>
         <input type="file" id="imagesDirInput" class="hidden" webkitdirectory directory multiple>
         <button class="btn sm" id="btnPickImages">選択</button>
         <span id="imagesStatus" class="hint bad hidden">カード画像がありません</span>
@@ -54,11 +55,11 @@
     <div class="left">
       <strong>ACG ソロ</strong>
       <span class="chip">seed: <span id="seedView">-</span></span>
-      <span id="initReturn" class="pill bad hidden">初期2枚戻し（残: <span id="initReturnLeft">2</span>）</span>
       <button class="btn" id="btnReloadDeck">デッキ選択</button>   
       <button class="btn" id="btnInit7">初手</button>
-      <button class="btn" id="btnReset7">盤面リセット＆7ドロー</button>
-
+      <button class="btn" id="btnReset7">!!盤面リセット!!</button>
+      <button class="btn" id="btnSide">サイド表示</button> 
+      <span id="initReturn" class="pill bad hidden">マリガン（残: <span id="initReturnLeft">2</span>）</span>
     </div>
     <div class="right">
       <button class="btn" id="btnExport">盤面保存</button>
@@ -70,10 +71,20 @@
       <span class="chip" id="tDeckCountChip">領土デッキ: 0</span> 
       <button class="chip" id="btnDraw" style="border:1px solid #fafafa"></button> 
       <button class="chip" id="btnDraw1">1ドロー (D)</button>
-    </div>
 
+      <script type="module">
+         import { takeScreenshot } from './js/screenshot.mjs';
+         document.getElementById('btnShot').addEventListener('click', takeScreenshot);
+      </script>
+      <script type="module">
+         import { exportState, importState } from './js/fieldState.mjs';
+         document.getElementById('btnExport').addEventListener('click', exportState);
+         document.getElementById('btnImport').addEventListener('click', () => {openFilePicker('.json', importState)});
+      </script>
+    </div>
+</header>
 <div id="replayPanel" class="replayPanel hidden">
-  <div class="row" style="justify-content:space-between;align-items:center">
+  <div class="row" style="justify-content:space-between;align-items:center" >
     <strong>リプレイ</strong>
     <div>
       <input type="file" id="replayFile" accept=".json" class="hidden">
@@ -104,7 +115,24 @@
     <button class="btn sm" id="btnStepNext">▶|</button>
   </div>
 </div>
-  </header>
+<!-- === サイドデッキ オーバーレイ === -->
+<div id="sidePanel" class="replayPanel hidden sidePanel">
+    <section class="zone" data-zone="SIDEDECK">
+      <h3 id="sideDeckTitle" style="display: flex; justify-content: space-between; align-items:center">サイドデッキ：0 
+      <span class="toolbar" style="margin-left: auto">
+        <label class="chip"><input id="sortSide" type="checkbox"> 名前順</label>
+      </span>
+      </h3>
+      <div class="content" id="sideDeck" data-zone="SIDEDECK"
+           ondragover="onDragOver(event)" ondrop="onDrop(event)">
+      </div>
+    </section>
+ <div class="row" style="display: flex; justify-content:space-between;align-items:center">
+    <div class="hint">※ 基礎デッキ←→サイドは同じ枚数のみ可能</div>
+    <button class="btn sm" id="btnSideClose" style="margin-left: auto">閉じる</button>
+    <button class="btn sm" id="resetSideDeck">デッキリセット</button>
+ </div>
+</div>
 
   <!-- 左：フリーゾーン + プレビュー + ログ -->
   <div class="leftpane">
@@ -165,11 +193,13 @@
             <button class="btn sm" id="btnDealToFree">FREE+1</button>
             <button class="btn sm" id="btnShuffleMain">基デ🔀</button>
           </span>
+      <span class="toolbar" style="margin-left: auto">
+        <label class="chip"><input id="sortDeck" type="checkbox"> 名前順</label>
+      </span>
         </span>
       </h3>
       <div class="content" id="mainDeck" ondblclick="drawFromMain()" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
     </section>
-
     <section class="zone">
       <h3>領地/領土デッキ <span class="toolbar">
         <span class="hint">※ﾀﾞﾌﾞﾙｸﾘｯｸ：先頭(右端)→領地</span>
@@ -177,6 +207,10 @@
         <button class="btn sm" id="btnShuffleTerr">領デ🔀</button>
       </span></h3>
       <div class="row content" style="border:none">
+        <div class="zone" data-zone="T_DECK">
+          <h3>領土デッキ</h3>
+          <div class="content" id="tDeck" ondblclick="drawFromTDeck()" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
+        </div>
         <div class="zone" style="flex:1" data-zone="T_FIELD">
           <h3>領地<span class="toolbar">
           <button class="btn sm" id="btnWakeTerritory1" style="margin-right:auto">起床</button>
@@ -184,10 +218,6 @@
           </span>
           </h3>
           <div class="content" id="territory" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
-        </div>
-        <div class="zone" data-zone="T_DECK">
-          <h3>領土デッキ</h3>
-          <div class="content" id="tDeck" ondblclick="drawFromTDeck()" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
         </div>
       </div>
     </section>
@@ -207,12 +237,10 @@
 
   <footer>
     <div class="hint">右クリック：表裏 / ダブルクリック：回転（戦・領のみ） / ショートカット：<b>D</b>=ドロー, <b>R</b>=回転, <b>X</b>=表裏, <b>F</b>=基デ→FREE, <b>S</b>=ログ保存</div>
-    <div class="hint">画像が見つからない場合は自動で拡張子を順に探索します。</div>
   </footer>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="script.js"></script>
-
 </body>
 </html>
