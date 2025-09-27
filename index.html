@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ACG ソロ </title>
   <link rel="stylesheet" href="style.css" />
-  <link rel="icon" href="./favicon.ico">
 </head>
 <body>
 <div class="overlay" id="overlay">
@@ -72,16 +71,6 @@
       <span class="chip" id="tDeckCountChip">領土デッキ: 0</span> 
       <button class="chip" id="btnDraw" style="border:1px solid #fafafa"></button> 
       <button class="chip" id="btnDraw1">1ドロー (D)</button>
-
-      <script type="module">
-         import { takeScreenshot } from './js/screenshot.mjs';
-         document.getElementById('btnShot').addEventListener('click', takeScreenshot);
-      </script>
-      <script type="module">
-         import { exportState, importState } from './js/fieldState.mjs';
-         document.getElementById('btnExport').addEventListener('click', exportState);
-         document.getElementById('btnImport').addEventListener('click', () => {openFilePicker('.json', importState)});
-      </script>
     </div>
 </header>
 <div id="replayPanel" class="replayPanel hidden">
@@ -214,7 +203,7 @@
         </div>
         <div class="zone" style="flex:1" data-zone="T_FIELD">
           <h3>領地<span class="toolbar">
-          <button class="btn sm" id="btnWakeTerritory1" style="margin-right:auto">起床</button>
+          <button class="btn sm" id="btnWakeTerritory" style="margin-right:auto">起床</button>
           <label class="chip"><input id="sortTerritory" type="checkbox">領土 名前順</label>
           </span>
           </h3>
@@ -242,6 +231,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-<script src="script.js"></script>
+<script type="module" src="script.js"></script>
+<div id="a11y-live" aria-live="polite" class="sr-only"></div>
 </body>
 </html>

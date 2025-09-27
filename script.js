@@ -1,6 +1,18 @@
-/** =====================
- *  ユーティリティ
- *  ===================== */
+// import
+ import { takeScreenshot } from './js/screenshot.mjs';
+ import { initFieldState, exportState, importState } from './js/fieldState.mjs';
+ import {
+   initCounters,
+   fmtP1P1,      // 表示整形: “+2/+2”
+   fmtPlus1,     // 表示整形: “[+3]”
+   showCtrMenu,  // カウンターポップアップ
+   adjustCounter,
+ } from './js/counters.mjs';
+
+//  ユーティリティ
+window.onDragOver = onDragOver;
+window.onDrop = onDrop;
+
 const $ = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 const logBox = $('#logBox');
@@ -32,10 +44,11 @@ function saveJson(filename, obj){
 function pad3(n){ return String(n).padStart(3,'0'); }
 function randomSeed(){ return Math.floor(Math.random()*1e9); }
 
-const CARD_IMG_CACHE = {};               // cardNo → 解決済み画像URLをキャッシュ
-
 // === Images picker support ===
 const IMG_EXTS = ["webp","png"];
+
+const CARD_IMG_CACHE = new Map();// 成功キャッシュ（base -> URL文字列）
+const CARD_IMG_NEG = new Set();  // 失敗した URL はここに入れて次回以降スキップ
 
 const imageStore = {
   // "picker": フォルダ選択, "auto": ./images 推定
@@ -82,60 +95,56 @@ function updateImagesStatus(ok) {
   imagesStatus?.classList.toggle("hidden", hide);
 }
 
-function setCardImage(imgEl, base) {
-  const candidates = [];
-
+async function setCardImage(imgEl, baseName) {
+  if (baseName === 'Back'){
+    imgEl.crossOrigin = 'anonymous';
+    imgEl.src = './images/Back.png';
+    return;
+  }
   // 1) 選択フォルダ由来（即URL完成：ObjectURL）
-  const picked = pickFromSelectedFolder(base);
-  if (picked) candidates.push(picked);
-
-  // 2) 既定 ./images の拡張子総当たり（img.onerror で順送り）
-  for (const ext of IMG_EXTS) {
-    candidates.push(`./images/${base}.${ext}`);
+  const picked = pickFromSelectedFolder(baseName);
+  if (picked) {
+    imgEl.crossOrigin = 'anonymous';
+    imgEl.src = picked;
+    return;
+  }
+  // 2) 成功キャッシュ命中なら即適用
+  const cached = CARD_IMG_CACHE.get(baseName);
+  if (cached) {
+    imgEl.crossOrigin = 'anonymous';
+    imgEl.src = cached;
+    return;
   }
 
-  // 順に試す
-  trySetImgSequential(imgEl, candidates);
+  // 3) 既定 ./images の拡張子総当たり（img.onerror で順送り）
+  for (const ext of IMG_EXTS) {
+    const url = `./images/${baseName}.${ext}`;
+    if (CARD_IMG_NEG.has(url)) continue;
+    const ok = await imageExists(url); // HEAD 相当 or fetch→ok 判定のあなたの既存関数
+    if (ok) {
+      CARD_IMG_CACHE.set(baseName, url);
+      imgEl.crossOrigin = 'anonymous';
+      imgEl.src = url;
+      return;
+    } else {
+      CARD_IMG_NEG.add(url);
+    }
+  }
+
+  // 4) 最後の手段：裏面などのデフォルト
+  imgEl.crossOrigin = 'anonymous';
+  imgEl.src = './images/Back.png';
 }
 
-function pickFromSelectedFolder(base) {
+function pickFromSelectedFolder(baseName) {
   // 完全一致 → 大文字・小文字ゆらぎを軽く吸収
-  if (imageStore.map.has(base)) return imageStore.map.get(base);
-  const lower = base.toLowerCase();
-  const upper = base.toUpperCase();
+  if (imageStore.map.has(baseName)) return imageStore.map.get(baseName);
+  const lower = baseName.toLowerCase();
+  const upper = baseName.toUpperCase();
   for (const k of [lower, upper]) {
     if (imageStore.map.has(k)) return imageStore.map.get(k);
   }
   return null;
-}
-
-function trySetImgSequential(imgEl, urls) {
-  let i = 0;
-  const tryNext = () => {
-    if (i >= urls.length) {
-      // 全滅：src消去＆エラーメッセージ表示
-      imgEl.removeAttribute("src");
-      updateImagesStatus(false);
-      return;
-    }
-    const url = urls[i++];
-    imgEl.onerror = () => tryNext();
-    imgEl.onload  = () => updateImagesStatus(true);
-    imgEl.src = url;
-  };
-  tryNext();
-}
-
-/* ── p1p1 カウンターを “+2/+2” “-1/-1” 形式に整形 ──────────── */
-function fmtP1P1(n){
-  const sign = n > 0 ? '+' : '';         
-  return `${sign}${n}/${sign}${n}`;
-}
-
-/* ── [+1] カウンターを “[+3]” 形式に整形 ───────────────── */
-function fmtPlus1(n){
-  const sign = n > 0 ? '+' : '';        
-  return `[${sign}${n}]`;
 }
 
 function wakeAllTerritory(){
@@ -146,8 +155,7 @@ function wakeAllTerritory(){
   log('領地のカードを起床');  // ← 後述の“名前表示ログ”対応済みlog
   renderZone('T_FIELD', $('#territory'), {row:true});
 }
-$('#btnWakeTerritory1')?.addEventListener('click', wakeAllTerritory);
-$('#btnWakeTerritory2')?.addEventListener('click', wakeAllTerritory);
+$('#btnWakeTerritory')?.addEventListener('click', wakeAllTerritory);
 
 let CARD_W = 92, CARD_H = 132;
 function applySquareBox(el){
@@ -189,9 +197,8 @@ function displayName(card){
   const db = CARD_DB?.[card.cardNo];
   return (db && (db.名前 || db.name)) || card.cardNo || 'UNKNOWN';
 }
-/** =====================
- *  データと状態
- *  ===================== */
+
+// データと状態
 let CARD_DB = {}; // カードナンバー→情報
 let CARD_BACKS = ['webp','png'].map(ext=>`./images/Back.${ext}`);
 let SEED = randomSeed();
@@ -246,9 +253,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-/** =====================
- *  画像解決（拡張子フォールバック）
- *  ===================== */
+// 画像解決（拡張子フォールバック）
+
 function imageSrcForCardNo(cardNo){
   if(cardNo === 'TOKEN'){
     return ['./images/token.webp', './images/token.png'];
@@ -257,9 +263,8 @@ function imageSrcForCardNo(cardNo){
   return IMG_EXTS.map(ext => `${base}.${ext}`);
 }
 
-/** =====================
- *  ID→カードナンバー変換
- *  ===================== */
+//ID→カードナンバー変換
+
 function idToCardNoMain(id){
   if(id === 9028) return 'BP1-080'; // 特例
   if(1 <= id && id <= 164) return 'ACG-' + pad3(id);
@@ -274,9 +279,7 @@ function idToCardNoTerr(id){
   return 'RYO-' + pad3(id - 8000);
 }
 
-/** =====================
- *  カード生成 / レンダリング
- *  ===================== */
+//カード生成 / レンダリング
 let uidCounter = 0;
 function makeUID(){ return 'c' + (++uidCounter) + '_' + Math.random().toString(36).slice(2,7); }
 
@@ -391,12 +394,18 @@ function updateDeckTitleCounts(){
   }
 }
 
-
 function cardElement(card){
   const el = document.createElement('div');
   el.className = 'card' + (card.faceUp ? '' : ' face-down');
   el.dataset.uid = card.uid;
   el.draggable = true;
+
+  // A11y属性
+  el.setAttribute('role', 'listitem');
+  el.setAttribute('aria-selected', (selectedUID === card.uid) ? 'true' : 'false');
+  // roving：選択カードだけ tabindex="0"、他は -1
+  el.tabIndex = (selectedUID === card.uid) ? 0 : -1;
+
   // イメージ
   const w = document.createElement('div'); w.className = 'imgWrap';
   const img = document.createElement('img');
@@ -409,8 +418,9 @@ function cardElement(card){
 }
   img.dataset.alts = JSON.stringify(srcs.slice(1));
   img.onload  = function(){
-    // 小サムネの成功URLをプレビュー側キャッシュへ学習
-    CARD_IMG_CACHE[card.cardNo] = this.src;
+   if (img.dataset.base && img.dataset.base !== 'Back'){
+     CARD_IMG_CACHE.set(card.cardNo, this.src);     // 小サムネの成功URLをプレビュー側キャッシュへ学習
+   }
   };
   img.onerror = function onerr(){
     try{
@@ -490,45 +500,17 @@ function cardElement(card){
     }, DBLCLICK_MS + 10);
   });
 }
-
   el.addEventListener('contextmenu', (e)=>{ // 右クリックで表裏
     e.preventDefault();
     toggleFace(card.uid);
   });
   el.addEventListener('dragstart', (e)=>{
     if(selectedUID !== card.uid){ // 選択中のみドラッグ可（仕様）→ ただしUXのため選択してからドラッグ開始
-      selectCard(card.uid);
+      selectCard(card.uid, el.querySelector('.imgWrap') || el);
     }
     e.dataTransfer.setData('text/plain', card.uid);
   });
   return el;
-}
-
-function showCtrMenu(uid, typ, anchorEl){
-  const menu = document.createElement('div');
-  menu.className = 'ctrMenu';
-  const up = document.createElement('button'); up.className='btn sm'; up.textContent='▲';
-  const dn = document.createElement('button'); dn.className='btn sm'; dn.textContent='▼';
-  const rm = document.createElement('button'); rm.className='btn sm warn'; rm.textContent='×';
-  up.onclick = ()=>{ adjustCounter(uid, typ, +1); menu.remove(); };
-  dn.onclick = ()=>{ adjustCounter(uid, typ, -1); menu.remove(); };
-  rm.onclick = ()=>{ setCounter(uid, typ, 0); menu.remove(); };
-  menu.append(up,dn,rm);
-  anchorEl.parentElement.appendChild(menu);
-  setTimeout(()=>document.addEventListener('click', ()=>menu.remove(), {once:true}), 0);
-}
-
-function adjustCounter(uid, typ, delta){
-  const card = findCard(uid);
-  if(!card) return;
-  card.counters[typ] = Math.max(0, (card.counters[typ]||0)+delta);
-  renderAll();
-}
-function setCounter(uid, typ, val){
-  const card = findCard(uid);
-  if(!card) return;
-  card.counters[typ] = Math.max(0, val|0);
-  renderAll();
 }
 
 /** 縦に5枚ずつ積んで、6枚目は右の新しい列へ */
@@ -583,6 +565,7 @@ function sortCardsByKana(cards) {
 }
 
 function renderZone(zoneName, container, opt={}){
+  container.setAttribute('role', 'list');
   if(zoneName === 'DECK' || zoneName === 'SIDEDECK'){
     container.classList.add('deckStrip');
     container.classList.remove('tdeckStrip','handStrip');
@@ -627,10 +610,7 @@ function renderZone(zoneName, container, opt={}){
     return; // 横並びはここで終了
   }
 
-  
-  // =========================
   // 2) 縦5枚ずつ → 右に列追加：墓地/除外/フリー
-  // =========================
   if(zoneName==='GRAVE' || zoneName==='BANISH' || zoneName==='FREE'){
     const overlap  = (typeof opt.overlap === 'number')
                       ? opt.overlap
@@ -642,11 +622,9 @@ function renderZone(zoneName, container, opt={}){
     const { usedHeight, usedWidth } =
       renderPileColumns(container, arr, { maxPerCol, overlap, colGap, startX });
 
-    // 幅は念のため最小幅をセット（横スクロールに頼らない）
-    container.style.minWidth = usedWidth + 'px';
+    container.style.minWidth = usedWidth + 'px';     // 幅は念のため最小幅をセット（横スクロールに頼らない）
 
-    // FREE は“縦スクロールではなく欄自体を拡張”する
-    if (zoneName==='FREE') {
+    if (zoneName==='FREE') {     // FREE は“縦スクロールではなく欄自体を拡張”する
       const zoneEl   = container.closest('.zone');          // FREEの親セクション
       const headerH  = zoneEl?.querySelector('h3')?.offsetHeight || 0;
       const padding  = 16;                                  // ゾーン内余白の概算
@@ -655,21 +633,16 @@ function renderZone(zoneName, container, opt={}){
       // 左ペインの1段目の行高をダイナミックに変更
       // （CSSの .leftpane で grid-template-rows:minmax(132px, var(--left-free-row, auto)) にしてある前提）
       document.documentElement.style.setProperty('--left-free-row', totalH + 'px');
-
-      // コンテンツ自身の高さも更新（見た目のズレを抑える）
-      container.style.height = usedHeight + 'px';
-      // FREEはoverflowを出さない
-      container.style.overflow = 'visible';
+      container.style.height = usedHeight + 'px';       // コンテンツ自身の高さも更新（見た目のズレを抑える）
+      container.style.overflow = 'visible';       // FREEはoverflowを出さない
     }else{
-      // 墓地/除外は必要なら固定高さ（重なりを崩さない）
-      container.style.height = usedHeight + 'px';
+      container.style.height = usedHeight + 'px'; // 墓地/除外は必要なら固定高さ（重なりを崩さない）
     }
     return;
   }
 
-  // =========================
+
   // 3) その他（デッキ帯など）の既存描画
-  // =========================
   container.classList.remove('hrow','pileCols');
   container.innerHTML = '';
   for(const c of arr){
@@ -681,9 +654,40 @@ function renderZone(zoneName, container, opt={}){
   }
 }
 
-/** =====================
- *  選択・操作
- *  ===================== */
+function renderZonesEl(...zones){
+  for (const z of zones) {
+    const el = zoneToEl(z);
+    if (el) renderZone(z, el);
+  }
+}
+
+function zoneToEl(z){
+    // ゾーン名 → コンテナ要素 への解決（既存の選び方に合わせて）
+    switch(z){
+      case 'FREE':        return $('#zone-free .content');
+      case 'BATTLEFIELD': return $('#battlefield');
+      case 'HAND':        return $('#hand');
+      case 'DECK':        return $('#mainDeck');
+      case 'T_FIELD':     return $('#territory');
+      case 'T_DECK':      return $('#tDeck');
+      case 'GRAVE':       return $('#grave');
+      case 'BANISH':      return $('#banish');
+      case 'SIDEDECK':    return $('#sideDeck');
+      default:            return null;
+    }
+}
+
+function focusCard(uid){
+  const el = document.querySelector(`.card[data-uid="${uid}"]`);
+  if (!el) return;
+  // すべてのカードを tabindex=-1 に
+  document.querySelectorAll('.card[tabindex="0"]').forEach(n => n.tabIndex = -1);
+  // 対象だけ 0 にして focus
+  el.tabIndex = 0;
+  el.focus({preventScroll:true});
+}
+
+// 選択・操作
 function findCard(uid){ return UID_MAP.get(uid) || null; }
 function removeCard(uid){
   const c = UID_MAP.get(uid); if(!c) return null;
@@ -691,12 +695,7 @@ function removeCard(uid){
   if (i>=0){ arr.splice(i,1); return c; }
   return null;
 }
-function clearSelection(){
-  document.querySelectorAll('.imgWrap.selected').forEach(el=> el.classList.remove('selected'));
-  selectedUID = null;
-  if (typeof updatePreview === 'function') updatePreview(null);
-}
-function selectCard(uid, el){
+/* function selectCard(uid, el){
   if(selectedUID === uid){
     // もう一度同じカードをクリック → 解除
     el?.classList.remove('selected');
@@ -704,14 +703,45 @@ function selectCard(uid, el){
     if (typeof updatePreview === 'function') updatePreview(null);
     return;
   }
-  document.querySelectorAll('.imgWrap.selected')
-    .forEach(n => n.classList.remove('selected'));
-
   clearSelection();
   selectedUID = uid;
   el?.classList.add('selected');
   if (typeof updatePreview === 'function') updatePreview(uid);
+} */
+
+function selectCard(uid, accentEl){
+  const el = document.querySelector(`.card[data-uid="${uid}"]`);
+  if (!el) return;
+
+   // ★ 同じカードを再クリック → 解除
+   if (selectedUID === uid) { // aria / tabindex 片付け
+     el.setAttribute('aria-selected','false');
+     el.tabIndex = -1;
+     // 枠（imgWrap.selected）の除去
+     (accentEl || el.querySelector('.imgWrap') || el).classList.remove('selected');
+     selectedUID = null;
+     updatePreview(null);
+     return;
+   }
+
+   // 以前の選択を解除
+   const prev = document.querySelector('.card[aria-selected="true"]');
+   if (prev) {
+     prev.setAttribute('aria-selected','false');
+     prev.tabIndex = -1;
+     // 旧UIの枠も外しておく
+     const pw = prev.querySelector('.imgWrap') || prev;
+     pw.classList.remove('selected');
+   }
+
+  el.setAttribute('aria-selected','true');
+  el.tabIndex = 0;
+  (accentEl || el.querySelector('.imgWrap') || el).classList.add('selected');
+  selectedUID = uid;
+  focusCard(uid);            // ← フォーカスも同期
+  updatePreview(uid);
 }
+
 function updatePreview(uid, opts ={}){
   const card = findCard(uid);
   const big = $('#bigImg'), title=$('#infoTitle'), kv=$('#infoKV'), txt=$('#infoText');
@@ -777,7 +807,7 @@ function toggleFace(uid){
   const c = findCard(uid); if(!c) return;
   c.faceUp = !c.faceUp;
   log(`${displayName(c)} を${c.faceUp?'表':'裏'}に`);
-  renderAll(); updatePreview(uid);
+  renderZone(c.zone, zoneToEl(c.zone)); updatePreview(uid);
 }
 function toggleTap(uid){
   const c = findCard(uid);
@@ -797,9 +827,8 @@ function toggleTap(uid){
   renderAll();
 }
 
-/** =====================
- *  ドラッグ＆ドロップ / ゾーン移動
- *  ===================== */
+//ドラッグ＆ドロップ / ゾーン移動
+
 function isToken(card){
   return card.kind === 'token' || card.isToken === true || /token/i.test(card.number || '');
 }
@@ -825,7 +854,7 @@ function moveCardTo(uid, newZone){
     log(`[無効] ${from}→${to} は移動不可`);
     // 元に戻す
     ZONES[from].push(c);
-    renderAll();
+    renderZonesEl(from, to); updatePreview(uid);
     return;
   }
     // ★ トークンは「墓地／除外／手札」に入った瞬間に消滅（カウンターも消す）
@@ -837,7 +866,7 @@ function moveCardTo(uid, newZone){
     c.counters = {};
     log(`${displayName(c)}を${from}→${to}（消滅）`);
     // ゾーンへは積まない（=ゲーム状態から削除）
-    renderAll();
+    renderZonesEl(from, to); updatePreview(uid);
     // プレビューは存在しないUIDになるので必要なら安全に無視
     try { updatePreview(uid); } catch {}
     return;
@@ -865,13 +894,62 @@ function moveCardTo(uid, newZone){
     }
     log(`${displayName(c)} を ${from} → ${to}`);
   }
-  renderAll();
-  updatePreview(uid);
+  renderZonesEl(from, to); updatePreview(uid);
+}
+// カードuidを同一ゾーン内で beforeUid の直前に差し込む
+function insertBeforeUID(zone, uid, beforeUid){
+  const arr = ZONES[zone]; if(!arr) return;
+  const i = arr.findIndex(c => c.uid === uid);
+  if (i === -1) return;
+  const [card] = arr.splice(i, 1);
+  const j = beforeUid ? arr.findIndex(c => c.uid === beforeUid) : -1;
+  if (j === -1) arr.push(card);        // 末尾
+  else          arr.splice(j, 0, card); // beforeUidの前
 }
 
-/** =====================
- *  デッキ操作
- *  ===================== */
+// ゾーン内で「どのカードの前に入れるか」をマウス位置から推定
+function pickBeforeUidByX(zone, clientX){
+  const cont = zoneToEl(zone); if(!cont) return null;
+  const cards = [...cont.querySelectorAll('.card')];
+  for (const el of cards){
+    const r = el.getBoundingClientRect();
+    if (clientX < r.left + r.width/2) return el.dataset.uid; // 左半分ならこの前
+  }
+  return null; // すべて通過→末尾
+}
+function enableReorderFor(zone){
+  const el = zoneToEl(zone); if(!el) return;
+  el.addEventListener('dragover', (e)=>{
+    e.preventDefault();
+    el.classList.add('reorder-on');
+    // 視覚ガイド（カーソル位置で候補に .reorder-before を付ける）
+    const beforeUid = pickBeforeUidByX(zone, e.clientX);
+    el.querySelectorAll('.card').forEach(c => c.classList.remove('reorder-before'));
+    if (beforeUid){
+      const m = el.querySelector(`.card[data-uid="${beforeUid}"]`);
+      if (m) m.classList.add('reorder-before');
+    }
+  });
+  el.addEventListener('dragleave', ()=>{
+    el.classList.remove('reorder-on');
+    el.querySelectorAll('.card').forEach(c => c.classList.remove('reorder-before'));
+  });
+  el.addEventListener('drop', (e)=>{
+    e.preventDefault();
+    const uid = e.dataTransfer?.getData('text/plain');
+    if (!uid) return;
+    const beforeUid = pickBeforeUidByX(zone, e.clientX);
+    insertBeforeUID(zone, uid, beforeUid);
+    renderZone(zone, el);
+    el.classList.remove('reorder-on');
+    el.querySelectorAll('.card').forEach(c => c.classList.remove('reorder-before'));
+  });
+}
+
+// 初期化時に必要ゾーンへ
+['HAND','BATTLEFIELD','T_FIELD','SIDEDECK'].forEach(enableReorderFor);
+
+// デッキ操作
 function shuffle(arr){
   for(let i=arr.length-1;i>0;i--){
     const j = Math.floor(Math.random()*(i+1));
@@ -955,9 +1033,7 @@ function resetBoard(){
 //  log('盤面リセット');
 }
 
-/** =====================
- *  初期セットアップ（読込/検証）
- *  ===================== */
+//初期セットアップ（読込/検証）
 const overlay = $('#overlay');
 const startBtn = $('#startBtn');
 let loadedDeckData = null;
@@ -1089,9 +1165,47 @@ startBtn.onclick = ()=>{
   log('ゲーム開始。基礎デッキ: '+ZONES.DECK.length+' / 領土デッキ: '+ZONES.T_DECK.length +'/サイドデッキ: '+ZONES.SIDEDECK.length);
 };
 
-/** =====================
- *  UIボタン動作
- *  ===================== */
+initFieldState({
+  // “最新値”を常に返せるよう getter を渡す
+  getSEED: () => SEED,
+  setSEED: (v) => { SEED = v; },
+
+  getINITIAL_RETURN_LEFT: () => INITIAL_RETURN_LEFT,
+  setINITIAL_RETURN_LEFT: (v) => { INITIAL_RETURN_LEFT = v; },
+
+  ZONES,              // 参照そのもの（各配列の中身を操作するため）
+  randomSeed,
+  makeUID,
+
+  renderAll,
+  log,
+  $,
+  saveText           // exportState 用
+});
+
+initCounters({
+  findCard,                 // uid -> card を返す関数
+  renderZone,               // 影響ゾーンのみ再描画したいので
+  zoneToEl: (z)=> {
+    // ゾーン名 → コンテナ要素 への解決（既存の選び方に合わせて）
+    switch(z){
+      case 'FREE':        return $('#zone-free .content');
+      case 'BATTLEFIELD': return $('#battlefield');
+      case 'HAND':        return $('#hand');
+      case 'DECK':        return $('#mainDeck');
+      case 'T_FIELD':     return $('#territory');
+      case 'T_DECK':      return $('#tDeck');
+      case 'GRAVE':       return $('#grave');
+      case 'BANISH':      return $('#banish');
+      case 'SIDEDECK':    return $('#sideDeck');
+      default:            return null;
+    }
+  },
+  renderAll,               // 全面再描画も必要な場面があるため
+  log, displayName         // ログ文言の統一のため
+});
+
+// UIボタン動作
 $('#btnShuffleMain').onclick = ()=>{ shuffle(ZONES.DECK); renderAll(); log('基礎デッキをシャッフル'); };
 $('#btnDrawFromDeck').onclick = ()=> drawFromMain();
 $('#btnShuffleTerr').onclick = ()=>{ shuffle(ZONES.T_DECK); renderAll(); log('領土デッキをシャッフル'); };
@@ -1099,8 +1213,9 @@ $('#btnDrawFromTDeck').onclick = ()=> drawFromTDeck();
 $('#btnDraw1').onclick = ()=> drawFromMain();
 $('#btnInit7').onclick = ()=> initDraw7();
 $('#btnReset7').onclick = ()=> resetBoard();
-//$('#btnExport').onclick = ()=> exportState();
-//$('#btnImport').onclick = ()=> openFilePicker('.json', importState);
+$('#btnShot').onclick = ()=> takeScreenshot();
+$('#btnExport').onclick = ()=> exportState();
+$('#btnImport').onclick = ()=> openFilePicker('.json', importState);
 $('#btnToken').onclick = ()=> createToken();
 $('#sortHand').onchange = ()=> renderAll();
 $('#sortTerritory').onchange = ()=> renderAll();
@@ -1134,8 +1249,7 @@ $('#resetSideDeck').onclick = () => {
         // 「OK」（確定）が押された場合の処理
         buildInitialZones(loadedDeckData);
         renderAll();
-    }
-    // 「キャンセル」が押された場合は何もしない
+    } // 「キャンセル」が押された場合は何もしない
 };
 $('#btnDealToFree').onclick = ()=>{
   if(ZONES.DECK.length === 0){ log('デッキ切れ'); return; }
@@ -1154,9 +1268,7 @@ document.getElementById('btnSideClose')?.addEventListener('click', ()=>{
   document.getElementById('sidePanel')?.classList.add('hidden');
 });
         
-/** =====================
- *  カウンターパレット → カードへドロップ
- *  ===================== */
+//カウンターパレット → カードへドロップ
 let dragCounterType = null;
 $$('#counterPalette .paletteItem').forEach(el=>{
   el.addEventListener('dragstart', (e)=>{
@@ -1178,33 +1290,51 @@ document.addEventListener('drop', (e)=>{
   const typ = data.split(':')[1];
   const c = findCard(uid);
   if(!c) return;
-  c.counters[typ] = (c.counters[typ]||0)+1;
-  renderAll();
-  log(`${displayName(c)} にカウンターを1個追加 (${typ})`);
+  adjustCounter(uid, typ, +1)
+  log(`${displayName(c)} にカウンターを追加 (${typ})`);
 });
 
-/** =====================
- *  キーボードショートカット
- *  ===================== */
+//キーボードショートカット
 document.addEventListener('keydown', (e)=>{
+  const uid = selectedUID; if (!uid) return;
   // 入力要素内では無効
   const tag = (e.target && e.target.tagName) || '';
   if(tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
 
   // 修飾キーが一つでも押されていたら無視
-  if(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  if( e.ctrlKey || e.altKey || e.metaKey) return;
+
+  const c = findCard(uid); if(!c) return;
+  const arr = ZONES[c.zone] || []; const i = arr.findIndex(x => x.uid === uid)
+  if( i < 0) return; 
+  
+  if (e.key === 'ArrowLeft'){
+    const prev = arr[i-1] || arr[arr.length-1];
+    if (prev){ selectCard(prev.uid); e.preventDefault(); }
+  } else if (e.key === 'ArrowRight'){
+    const next = arr[i+1] || arr[0];
+    if (next){ selectCard(next.uid); e.preventDefault(); }
+  } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown'){
+    // 任意：縦のゾーン間移動を定義（例：HAND→BATTLEFIELD）
+    const nextZone = (e.key==='ArrowUp') ? 'BATTLEFIELD' : 'HAND';
+    const targetArr = ZONES[nextZone] || [];
+    if (targetArr.length){
+      selectCard(targetArr[Math.min(i, targetArr.length-1)].uid);
+      e.preventDefault();
+    }
+  }
 
   const k = e.key.toLowerCase();
   if(k==='d'){ /* ドロー */ drawFromMain(); e.preventDefault(); }
   else if(k==='r'){ /* 回転 */ if(selectedUID) toggleTap(selectedUID); e.preventDefault(); }
   else if(k==='x'){ /* 表裏 */ if(selectedUID) toggleFace(selectedUID); e.preventDefault(); }
   else if(k==='f'){ /* 基デ→FREE */ 
-    if(ZONES.DECK.length){
-      const top = ZONES.DECK[0];
+    const top = ZONES.DECK && ZONES.DECK[0];
+    if(top){
       moveCardTo(top.uid, 'FREE'); // 統一
       const moved = findCard(top.uid);
       if (moved) { moved.faceUp = true; updatePreview(moved.uid); };
-      renderAll(); log(`${displayName(top)} を基デ→FREE`);
+      log(`${displayName(top)} を基デ→FREE`);
     }
     e.preventDefault();
   }
@@ -1212,4 +1342,5 @@ document.addEventListener('keydown', (e)=>{
     if(isRecording){ toggleRecording(); } // 記録停止→自動保存
     e.preventDefault();
   }
+  
 });
