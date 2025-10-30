@@ -10,9 +10,6 @@
  } from './js/counters.mjs';
 
 //  ユーティリティ
-window.onDragOver = onDragOver;
-window.onDrop = onDrop;
-
 const $ = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 const logBox = $('#logBox');
@@ -399,13 +396,6 @@ function cardElement(card){
   el.className = 'card' + (card.faceUp ? '' : ' face-down');
   el.dataset.uid = card.uid;
   el.draggable = true;
-
-  // A11y属性
-  el.setAttribute('role', 'listitem');
-  el.setAttribute('aria-selected', (selectedUID === card.uid) ? 'true' : 'false');
-  // roving：選択カードだけ tabindex="0"、他は -1
-  el.tabIndex = (selectedUID === card.uid) ? 0 : -1;
-
   // イメージ
   const w = document.createElement('div'); w.className = 'imgWrap';
   const img = document.createElement('img');
@@ -464,7 +454,7 @@ function cardElement(card){
     el.appendChild(ctrs);
   }
   // 回転
-  el.style.transform = `rotate(${card.rot}deg)`;
+  el.style.setProperty('--rot-card', card.rot + 'deg');
   applySquareBox(el);
 
  {
@@ -500,16 +490,21 @@ function cardElement(card){
     }, DBLCLICK_MS + 10);
   });
 }
+
   el.addEventListener('contextmenu', (e)=>{ // 右クリックで表裏
     e.preventDefault();
     toggleFace(card.uid);
   });
   el.addEventListener('dragstart', (e)=>{
+    document.body.classList.add('dragging');
     if(selectedUID !== card.uid){ // 選択中のみドラッグ可（仕様）→ ただしUXのため選択してからドラッグ開始
-      selectCard(card.uid, el.querySelector('.imgWrap') || el);
+      selectCard(card.uid);
     }
     e.dataTransfer.setData('text/plain', card.uid);
   });
+ el.addEventListener('dragend', ()=>{
+ document.body.classList.remove('dragging');
+ });
   return el;
 }
 
@@ -565,7 +560,6 @@ function sortCardsByKana(cards) {
 }
 
 function renderZone(zoneName, container, opt={}){
-  container.setAttribute('role', 'list');
   if(zoneName === 'DECK' || zoneName === 'SIDEDECK'){
     container.classList.add('deckStrip');
     container.classList.remove('tdeckStrip','handStrip');
@@ -622,9 +616,11 @@ function renderZone(zoneName, container, opt={}){
     const { usedHeight, usedWidth } =
       renderPileColumns(container, arr, { maxPerCol, overlap, colGap, startX });
 
-    container.style.minWidth = usedWidth + 'px';     // 幅は念のため最小幅をセット（横スクロールに頼らない）
+    // 幅は念のため最小幅をセット（横スクロールに頼らない）
+    container.style.minWidth = usedWidth + 'px';
 
-    if (zoneName==='FREE') {     // FREE は“縦スクロールではなく欄自体を拡張”する
+    // FREE は“縦スクロールではなく欄自体を拡張”する
+    if (zoneName==='FREE') {
       const zoneEl   = container.closest('.zone');          // FREEの親セクション
       const headerH  = zoneEl?.querySelector('h3')?.offsetHeight || 0;
       const padding  = 16;                                  // ゾーン内余白の概算
@@ -633,10 +629,14 @@ function renderZone(zoneName, container, opt={}){
       // 左ペインの1段目の行高をダイナミックに変更
       // （CSSの .leftpane で grid-template-rows:minmax(132px, var(--left-free-row, auto)) にしてある前提）
       document.documentElement.style.setProperty('--left-free-row', totalH + 'px');
-      container.style.height = usedHeight + 'px';       // コンテンツ自身の高さも更新（見た目のズレを抑える）
-      container.style.overflow = 'visible';       // FREEはoverflowを出さない
+
+      // コンテンツ自身の高さも更新（見た目のズレを抑える）
+      container.style.height = usedHeight + 'px';
+      // FREEはoverflowを出さない
+      container.style.overflow = 'visible';
     }else{
-      container.style.height = usedHeight + 'px'; // 墓地/除外は必要なら固定高さ（重なりを崩さない）
+      // 墓地/除外は必要なら固定高さ（重なりを崩さない）
+      container.style.height = usedHeight + 'px';
     }
     return;
   }
@@ -675,17 +675,8 @@ function zoneToEl(z){
       case 'SIDEDECK':    return $('#sideDeck');
       default:            return null;
     }
-}
+  }
 
-function focusCard(uid){
-  const el = document.querySelector(`.card[data-uid="${uid}"]`);
-  if (!el) return;
-  // すべてのカードを tabindex=-1 に
-  document.querySelectorAll('.card[tabindex="0"]').forEach(n => n.tabIndex = -1);
-  // 対象だけ 0 にして focus
-  el.tabIndex = 0;
-  el.focus({preventScroll:true});
-}
 
 // 選択・操作
 function findCard(uid){ return UID_MAP.get(uid) || null; }
@@ -695,7 +686,12 @@ function removeCard(uid){
   if (i>=0){ arr.splice(i,1); return c; }
   return null;
 }
-/* function selectCard(uid, el){
+function clearSelection(){
+  document.querySelectorAll('.imgWrap.selected').forEach(el=> el.classList.remove('selected'));
+  selectedUID = null;
+  if (typeof updatePreview === 'function') updatePreview(null);
+}
+function selectCard(uid, el){
   if(selectedUID === uid){
     // もう一度同じカードをクリック → 解除
     el?.classList.remove('selected');
@@ -707,39 +703,6 @@ function removeCard(uid){
   selectedUID = uid;
   el?.classList.add('selected');
   if (typeof updatePreview === 'function') updatePreview(uid);
-} */
-
-function selectCard(uid, accentEl){
-  const el = document.querySelector(`.card[data-uid="${uid}"]`);
-  if (!el) return;
-
-   // ★ 同じカードを再クリック → 解除
-   if (selectedUID === uid) { // aria / tabindex 片付け
-     el.setAttribute('aria-selected','false');
-     el.tabIndex = -1;
-     // 枠（imgWrap.selected）の除去
-     (accentEl || el.querySelector('.imgWrap') || el).classList.remove('selected');
-     selectedUID = null;
-     updatePreview(null);
-     return;
-   }
-
-   // 以前の選択を解除
-   const prev = document.querySelector('.card[aria-selected="true"]');
-   if (prev) {
-     prev.setAttribute('aria-selected','false');
-     prev.tabIndex = -1;
-     // 旧UIの枠も外しておく
-     const pw = prev.querySelector('.imgWrap') || prev;
-     pw.classList.remove('selected');
-   }
-
-  el.setAttribute('aria-selected','true');
-  el.tabIndex = 0;
-  (accentEl || el.querySelector('.imgWrap') || el).classList.add('selected');
-  selectedUID = uid;
-  focusCard(uid);            // ← フォーカスも同期
-  updatePreview(uid);
 }
 
 function updatePreview(uid, opts ={}){
@@ -827,14 +790,25 @@ function toggleTap(uid){
   renderAll();
 }
 
-//ドラッグ＆ドロップ / ゾーン移動
+/** 指定UIDのカードに 0.7s のシャイン演出を一度だけ発火 */
+function triggerShineEffect(uid){
+  const el = document.querySelector(`.card[data-uid="${uid}"]`);
+  if(!el) return;
+  el.classList.remove('fx-burst');   // 付け直しで再生させる
+  void el.offsetWidth;               // reflow
+  el.classList.add('fx-burst');
+  setTimeout(()=> el.classList.remove('fx-burst'), 2500); // 念のため自動クリア
+}
 
+//ドラッグ＆ドロップ / ゾーン移動
 function isToken(card){
   return card.kind === 'token' || card.isToken === true || /token/i.test(card.number || '');
 }
 function onDragOver(ev){ ev.preventDefault(); }
 function onDrop(ev){
   ev.preventDefault();
+  const plain = ev.dataTransfer?.getData('text/plain') || '';
+  if (plain.startsWith('COUNTER:') || plain.startsWith('EFFECT:')) return; // ★パレットは移動させない
   const uid = ev.dataTransfer.getData('text/plain');
   
   const fromAttr = ev.currentTarget.getAttribute('data-zone');
@@ -896,58 +870,6 @@ function moveCardTo(uid, newZone){
   }
   renderZonesEl(from, to); updatePreview(uid);
 }
-// カードuidを同一ゾーン内で beforeUid の直前に差し込む
-function insertBeforeUID(zone, uid, beforeUid){
-  const arr = ZONES[zone]; if(!arr) return;
-  const i = arr.findIndex(c => c.uid === uid);
-  if (i === -1) return;
-  const [card] = arr.splice(i, 1);
-  const j = beforeUid ? arr.findIndex(c => c.uid === beforeUid) : -1;
-  if (j === -1) arr.push(card);        // 末尾
-  else          arr.splice(j, 0, card); // beforeUidの前
-}
-
-// ゾーン内で「どのカードの前に入れるか」をマウス位置から推定
-function pickBeforeUidByX(zone, clientX){
-  const cont = zoneToEl(zone); if(!cont) return null;
-  const cards = [...cont.querySelectorAll('.card')];
-  for (const el of cards){
-    const r = el.getBoundingClientRect();
-    if (clientX < r.left + r.width/2) return el.dataset.uid; // 左半分ならこの前
-  }
-  return null; // すべて通過→末尾
-}
-function enableReorderFor(zone){
-  const el = zoneToEl(zone); if(!el) return;
-  el.addEventListener('dragover', (e)=>{
-    e.preventDefault();
-    el.classList.add('reorder-on');
-    // 視覚ガイド（カーソル位置で候補に .reorder-before を付ける）
-    const beforeUid = pickBeforeUidByX(zone, e.clientX);
-    el.querySelectorAll('.card').forEach(c => c.classList.remove('reorder-before'));
-    if (beforeUid){
-      const m = el.querySelector(`.card[data-uid="${beforeUid}"]`);
-      if (m) m.classList.add('reorder-before');
-    }
-  });
-  el.addEventListener('dragleave', ()=>{
-    el.classList.remove('reorder-on');
-    el.querySelectorAll('.card').forEach(c => c.classList.remove('reorder-before'));
-  });
-  el.addEventListener('drop', (e)=>{
-    e.preventDefault();
-    const uid = e.dataTransfer?.getData('text/plain');
-    if (!uid) return;
-    const beforeUid = pickBeforeUidByX(zone, e.clientX);
-    insertBeforeUID(zone, uid, beforeUid);
-    renderZone(zone, el);
-    el.classList.remove('reorder-on');
-    el.querySelectorAll('.card').forEach(c => c.classList.remove('reorder-before'));
-  });
-}
-
-// 初期化時に必要ゾーンへ
-['HAND','BATTLEFIELD','T_FIELD','SIDEDECK'].forEach(enableReorderFor);
 
 // デッキ操作
 function shuffle(arr){
@@ -1034,6 +956,7 @@ function resetBoard(){
 }
 
 //初期セットアップ（読込/検証）
+
 const overlay = $('#overlay');
 const startBtn = $('#startBtn');
 let loadedDeckData = null;
@@ -1249,7 +1172,8 @@ $('#resetSideDeck').onclick = () => {
         // 「OK」（確定）が押された場合の処理
         buildInitialZones(loadedDeckData);
         renderAll();
-    } // 「キャンセル」が押された場合は何もしない
+    }
+    // 「キャンセル」が押された場合は何もしない
 };
 $('#btnDealToFree').onclick = ()=>{
   if(ZONES.DECK.length === 0){ log('デッキ切れ'); return; }
@@ -1269,12 +1193,17 @@ document.getElementById('btnSideClose')?.addEventListener('click', ()=>{
 });
         
 //カウンターパレット → カードへドロップ
-let dragCounterType = null;
+
+let typ = null;
 $$('#counterPalette .paletteItem').forEach(el=>{
   el.addEventListener('dragstart', (e)=>{
-    dragCounterType = el.dataset.ctype;
-    e.dataTransfer.setData('text/plain', 'COUNTER:'+dragCounterType);
-  });
+    const typ = el.dataset.ctype;
+    if (typ === 'effect_on'){
+      e.dataTransfer.setData('text/plain', 'EFFECT:effect_on');
+    } else{
+      e.dataTransfer.setData('text/plain', 'COUNTER:'+ typ);
+    }   
+    });
 });
 document.addEventListener('dragover', (e)=>{
   // カード上でのみ有効化する場合は追加判定も可能
@@ -1282,47 +1211,435 @@ document.addEventListener('dragover', (e)=>{
 document.addEventListener('drop', (e)=>{
   const dt = e.dataTransfer; if(!dt) return;
   const data = dt.getData('text/plain') || '';
-  if(!data.startsWith('COUNTER:')) return;
   if (!(e.target instanceof Element)) return;
-  const target = e.target.closest('.card');
-  if(!target) return;
-  const uid = target.dataset.uid;
-  const typ = data.split(':')[1];
-  const c = findCard(uid);
-  if(!c) return;
-  adjustCounter(uid, typ, +1)
-  log(`${displayName(c)} にカウンターを追加 (${typ})`);
+
+  if (data.startsWith('EFFECT:')) {
+    const cardEl = e.target.closest('.card')
+      || document.elementFromPoint(e.clientX, e.clientY)?.closest('.card');
+    if (!cardEl) return;
+    const uid = cardEl.dataset.uid;
+    const card = findCard(uid); if (!card) return;
+
+    if (card.zone === 'FREE' || card.zone === 'SIDEDECK') {
+      log(`${displayName(card)} は ${card.zone} のため [効果] は発火しません`);
+      e.stopPropagation();
+      return;
+    }
+    triggerShineEffect(uid);    // 0.7s：拡大しながらシャイン→戻す
+    log(`${displayName(card)} に [効果] を発火（0.7s）`);
+    e.stopPropagation();        // ★ 念のため二重防御
+    return;
+  }  
+
+  if(!data.startsWith('COUNTER:')) {
+    const target = e.target.closest('.card');
+    if(!target) return;
+    const uid = target.dataset.uid;
+    const typ = data.split(':')[1];
+    const c = findCard(uid);
+    if(!c) return;
+    adjustCounter(uid, typ, +1)
+    log(`${displayName(c)} にカウンターを追加 (${typ})`);
+    e.stopPropagation();
+    return;
+  }
 });
 
+// ===============================
+// 操作ログ / Undo-Redo / 録画エンジン
+// ===============================
+const Action = { MOVE:'move', ROTATE:'rotate', FLIP:'flip', COUNTER:'counter', DRAW:'draw', SHUFFLE:'shuffle', CREATE:'create', DESTROY:'destroy', EFFECT:'effect', UNDO:'undo', REDO:'redo' };
+let __SILENT = false;            // 履歴適用中などの“無記録”ガード
+let __CTX = null;                 // 一部操作の文脈（例: DRAW中）
+let OP_ID = 0;                    // 通し番号
+const HISTORY = { past: [], future: [] }; // Undo/Redo 用（通常操作のみ）
+let RECORDING = false;            // 録画ON/OFF
+let SESSION = null;               // { startedAt, startIndex, events: [] }
+
+function pad2(n){ return String(n).padStart(2,'0'); }
+function nowISO(){ return new Date().toISOString(); }
+function snapshotCard(card){
+  if(!card) return null;
+  const arr = ZONES[card.zone] || [];
+  const idx = arr.findIndex(x=>x.uid===card.uid);
+  return {
+    uid: card.uid, cardNo: card.cardNo, name: card.name,
+    zone: card.zone, index: idx,
+    faceUp: !!card.faceUp, rot: card.rot|0,
+    counters: { ...(card.counters||{}) }
+  };
+}
+function appendEventLogView(ev){
+  const line = document.createElement('div');
+  line.className = 'entry';
+  const head = document.createElement('div');
+  const t = new Date(ev.ts);
+  head.textContent = `[${pad2(t.getHours())}:${pad2(t.getMinutes())}:${pad2(t.getSeconds())}] ${describeEvent(ev)}`;
+  const det = document.createElement('details');
+  const sum = document.createElement('summary'); sum.textContent = '詳細';
+  const pre = document.createElement('pre');
+  pre.textContent = JSON.stringify({ prev: ev.prev||null, next: ev.next||null, meta: ev.meta||null }, null, 2);
+  det.appendChild(sum); det.appendChild(pre);
+  line.appendChild(head); line.appendChild(det);
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+function describeEvent(ev){
+  const card = ev.card?.name || ev.card?.cardNo || ev.card?.uid || '';
+  switch(ev.type){
+    case Action.MOVE:    return `${card} を ${ev.prev?.zone}→${ev.next?.zone}${ev.meta?.via?`（${ev.meta.via}）`:''}`;
+    case Action.FLIP:    return `${card} を 表裏トグル (${ev.prev?.faceUp?'表→裏':'裏→表'})`;
+    case Action.ROTATE:  return `${card} を 回転 (${ev.prev?.rot}→${ev.next?.rot})`;
+    case Action.COUNTER: return `${card} のカウンター(${ev.meta?.ctype}) ${ev.meta?.delta>0?'+':''}${ev.meta?.delta}`;
+    case Action.DRAW:    return `${card?card+'を':''} ドロー`;
+    case Action.SHUFFLE: return `${ev.meta?.zone} をシャッフル`;
+    case Action.CREATE:  return `カード生成（${card}）`;
+    case Action.DESTROY: return `カード消滅（${card}）`;
+    case Action.EFFECT:  return `${card} に[効果]発火`;
+    case Action.UNDO:    return `Undo: #${ev.meta?.targetId} を取り消し`;
+    case Action.REDO:    return `Redo: #${ev.meta?.targetId} をやり直し`;
+    default:             return ev.type;
+  }
+}
+function updateUndoRedoButtons(){
+  const u = document.getElementById('btnUndo');
+  const r = document.getElementById('btnRedo');
+  if(u) u.disabled = HISTORY.past.length===0;
+  if(r) r.disabled = HISTORY.future.length===0;
+}
+function logEventForExport(ev){
+  if(!RECORDING || !SESSION) return;
+  SESSION.events.push(ev);
+  appendEventLogView(ev);
+}
+function beginRecording(){
+  if(RECORDING) return;
+  RECORDING = true;
+  SESSION = { startedAt: nowISO(), startIndex: HISTORY.past.length, events: [] };
+  const b = document.getElementById('btnRecord');
+  if(b){ b.textContent='記録停止'; b.classList.add('recording'); }
+  log('記録を開始');
+}
+function endRecording(){
+  if(!RECORDING) return;
+  const b = document.getElementById('btnRecord');
+  if(b){ b.textContent='記録開始'; b.classList.remove('recording'); }
+  RECORDING = false;
+  const evs = (SESSION?.events||[]);
+  const ts = new Date();
+  const filename = `acg_log_${ts.getFullYear()}${pad2(ts.getMonth()+1)}${pad2(ts.getDate())}_${pad2(ts.getHours())}${pad2(ts.getMinutes())}${pad2(ts.getSeconds())}.json`;
+  const payload = {
+    type:'acg-log', version:1,
+    startedAt: SESSION?.startedAt, endedAt: nowISO(),
+    seed: SEED,
+    events: evs
+  };
+  saveJson(filename, payload);
+  log(`記録を保存: ${filename}`);
+  SESSION = null;
+}
+function recordAndPush(ev){
+  HISTORY.past.push(ev);            // 通常操作は Undo 対象
+  HISTORY.future.length = 0;        // Redo 破棄
+  updateUndoRedoButtons();
+  logEventForExport(ev);            // 録画中のみJSON/表示へ
+}
+function invert(ev){
+  const base = { ts: Date.now(), card: ev.card, meta: { ...(ev.meta||{}) } };
+  if(ev.type===Action.MOVE){
+    return { id: ++OP_ID, type: Action.MOVE, ts: Date.now(),
+      card: ev.card, prev: ev.next, next: ev.prev, meta: { ...ev.meta, via:'undo' } };
+  }
+  if(ev.type===Action.FLIP){
+    return { id: ++OP_ID, type: Action.FLIP, ts: Date.now(),
+      card: ev.card, prev: ev.next, next: ev.prev };
+  }
+  if(ev.type===Action.ROTATE){
+    return { id: ++OP_ID, type: Action.ROTATE, ts: Date.now(),
+      card: ev.card, prev: ev.next, next: ev.prev };
+  }
+  if(ev.type===Action.COUNTER){
+    const inv = { ...(ev.meta||{}) }; inv.delta = -(inv.delta||0);
+    // prev/next も逆転
+    return { id: ++OP_ID, type: Action.COUNTER, ts: Date.now(),
+      card: ev.card, prev: ev.next, next: ev.prev, meta: inv };
+  }
+  if(ev.type===Action.SHUFFLE){
+    return { id: ++OP_ID, type: Action.SHUFFLE, ts: Date.now(),
+      card: null, prev: ev.next, next: ev.prev, meta: ev.meta };
+  }
+  // CREATE/DESTROY/EFFECT/DRAW は“状態の巻き戻し”が曖昧なので最小動作
+  if(ev.type===Action.CREATE){
+    return { id: ++OP_ID, type: Action.DESTROY, ts: Date.now(), card: ev.card };
+  }
+  if(ev.type===Action.DESTROY){
+    return { id: ++OP_ID, type: Action.CREATE, ts: Date.now(), card: ev.card, next: ev.next };
+  }
+  if(ev.type===Action.DRAW){
+    // move として逆再生（HAND→DECKトップへ戻す）
+    return { id: ++OP_ID, type: Action.MOVE, ts: Date.now(), card: ev.card, prev: ev.next, next: ev.prev, meta:{ via:'undo-draw' } };
+  }
+  if(ev.type===Action.EFFECT){
+    // 視覚効果は副作用なし：何もしない“空反転”
+    return { id: ++OP_ID, type: Action.EFFECT, ts: Date.now(), card: ev.card };
+  }
+  return { id: ++OP_ID, ...base };
+}
+function apply(ev){
+  // 既存関数をラップしない“サイレント”実行
+  __SILENT = true;
+  try{
+    switch(ev.type){
+      case Action.MOVE:
+        if(ev.next?.zone && ev.card?.uid){ moveCardTo(ev.card.uid, ev.next.zone); }
+        break;
+      case Action.FLIP:
+        if(ev.card?.uid){ toggleFace(ev.card.uid); }
+        break;
+      case Action.ROTATE:
+        if(ev.card?.uid){ toggleTap(ev.card.uid, (ev.next?.rot|0) - (ev.prev?.rot|0)); }
+        break;
+      case Action.COUNTER:
+        if(ev.card?.uid && ev.meta?.ctype){ adjustCounter(ev.card.uid, ev.meta.ctype, ev.meta.delta|0); }
+        break;
+      case Action.SHUFFLE:
+        if(ev.meta?.zone==='DECK'){ ZONES.DECK = orderByUID(ZONES.DECK, ev.next?.order||[]); renderAll(); }
+        if(ev.meta?.zone==='T_DECK'){ ZONES.T_DECK = orderByUID(ZONES.T_DECK, ev.next?.order||[]); renderAll(); }
+        break;
+      case Action.CREATE:
+        if(ev.card?.cardNo==='TOKEN'){ createToken(); }
+        break;
+      case Action.DESTROY:
+        if(ev.card?.uid){ removeCard(ev.card.uid); renderAll(); }
+        break;
+      case Action.EFFECT:
+        if(ev.card?.uid){ triggerShineEffect(ev.card.uid); }
+        break;
+    }
+  } finally {
+    __SILENT = false;
+  }
+}
+function orderByUID(arr, uidOrder){
+  const map = new Map(arr.map(c=>[c.uid,c]));
+  return uidOrder.map(u=>map.get(u)).filter(Boolean);
+}
+
+// --------- 既存関数をラップ（通常操作 → 履歴に積む） ---------
+(function(){
+  // move
+  const _move = moveCardTo;
+  window.moveCardTo = function(uid, newZone){
+    const before = snapshotCard(findCard(uid));
+    const res = _move(uid, newZone);
+    const after  = snapshotCard(findCard(uid));
+    if(__SILENT) return res;
+    const ev = { id: ++OP_ID, type: Action.MOVE, ts: Date.now(), card: after||before, prev: before, next: after, meta: { via: (__CTX||'user') } };
+    recordAndPush(ev);
+    return res;
+  };
+  // flip
+  const _flip = toggleFace;
+  window.toggleFace = function(uid){
+    const before = snapshotCard(findCard(uid));
+    const res = _flip(uid);
+    const after  = snapshotCard(findCard(uid));
+    if(__SILENT) return res;
+    const ev = { id: ++OP_ID, type: Action.FLIP, ts: Date.now(), card: after||before, prev: before, next: after };
+    recordAndPush(ev);
+    return res;
+  };
+  // rotate
+  const _tap = toggleTap;
+  window.toggleTap = function(uid, deg){
+    const before = snapshotCard(findCard(uid));
+    const res = _tap(uid, deg);
+    const after  = snapshotCard(findCard(uid));
+    if(__SILENT) return res;
+    const ev = { id: ++OP_ID, type: Action.ROTATE, ts: Date.now(), card: after||before, prev: before, next: after };
+    recordAndPush(ev);
+    return res;
+  };
+  // token create
+  const _createToken = createToken;
+  window.createToken = function(){
+    const c = _createToken();
+    if(__SILENT) return c;
+    const snap = snapshotCard(c);
+    const ev = { id: ++OP_ID, type: Action.CREATE, ts: Date.now(), card: snap, next: snap };
+    recordAndPush(ev);
+    return c;
+  };
+  // effect
+  const _fx = triggerShineEffect;
+  window.triggerShineEffect = function(uid){
+    const res = _fx(uid);
+    if(__SILENT) return res;
+    const c = snapshotCard(findCard(uid));
+    const ev = { id: ++OP_ID, type: Action.EFFECT, ts: Date.now(), card: c };
+    recordAndPush(ev);
+    return res;
+  };
+  // draw wrappers（move に via=draw を付与）
+  const _drawMain = drawFromMain;
+  window.drawFromMain = function(){ __CTX='draw:main'; const r=_drawMain(); __CTX=null; return r; };
+  const _drawTD = drawFromTDeck;
+  window.drawFromTDeck = function(){ __CTX='draw:tdeck'; const r=_drawTD(); __CTX=null; return r; };
+  // カウンター調整：showCtrMenu 経由の操作をフック（差分検出）
+  const _showCtrMenu = showCtrMenu;
+  let __ctrCtx = null; // {uid, typ, before}
+  window.showCtrMenu = function(uid, typ, anchor){
+    const c = findCard(uid);
+    __ctrCtx = { uid, typ, before: (c?.counters?.[typ]||0) };
+    return _showCtrMenu(uid, typ, anchor);
+  };
+  document.addEventListener('click', (e)=>{
+    // ctrMenuが開いている間のボタン操作を検出（次tickで差分確認）
+    if(!__ctrCtx) return;
+    if(e.target.closest?.('.ctrMenu')){
+      setTimeout(()=>{
+        const c = findCard(__ctrCtx.uid);
+        const after = (c?.counters?.[__ctrCtx.typ]||0);
+        if(after !== __ctrCtx.before){
+          const delta = after - __ctrCtx.before;
+          const beforeSnap = snapshotCard(c); beforeSnap.counters = { ...(beforeSnap.counters||{}), [__ctrCtx.typ]: __ctrCtx.before };
+          const afterSnap  = snapshotCard(c); afterSnap.counters  = { ...(afterSnap.counters||{}),  [__ctrCtx.typ]: after };
+          if(!__SILENT){
+            const ev = { id: ++OP_ID, type: Action.COUNTER, ts: Date.now(), card: afterSnap, prev: beforeSnap, next: afterSnap, meta:{ ctype: __ctrCtx.typ, delta } };
+            recordAndPush(ev);
+          }
+          __ctrCtx.before = after;
+        }
+      },0);
+    } else {
+      __ctrCtx = null;
+    }
+  });
+})();
+
+// --------- シャッフル(ボタン)に履歴を付与 ---------
+(function(){
+  const btnMain = document.getElementById('btnShuffleMain');
+  if(btnMain){
+    const orig = btnMain.onclick;
+    btnMain.onclick = ()=>{
+      const prev = { order: ZONES.DECK.map(c=>c.uid) };
+      orig?.(); // 既存動作（shuffle→renderAll→log）
+      const next = { order: ZONES.DECK.map(c=>c.uid) };
+      if(!__SILENT){
+        const ev = { id: ++OP_ID, type: Action.SHUFFLE, ts: Date.now(), meta:{ zone:'DECK' }, prev, next };
+        recordAndPush(ev);
+      }
+    };
+  }
+  const btnTerr = document.getElementById('btnShuffleTerr');
+  if(btnTerr){
+    const orig = btnTerr.onclick;
+    btnTerr.onclick = ()=>{
+      const prev = { order: ZONES.T_DECK.map(c=>c.uid) };
+      orig?.();
+      const next = { order: ZONES.T_DECK.map(c=>c.uid) };
+      if(!__SILENT){
+        const ev = { id: ++OP_ID, type: Action.SHUFFLE, ts: Date.now(), meta:{ zone:'T_DECK' }, prev, next };
+        recordAndPush(ev);
+      }
+    };
+  }
+})();
+
+// --------- Undo / Redo UI & ショートカット ---------
+(function(){
+  const btnUndo = document.getElementById('btnUndo');
+  const btnRedo = document.getElementById('btnRedo');
+  const btnRec  = document.getElementById('btnRecord');
+  btnUndo && (btnUndo.onclick = ()=>{
+    const last = HISTORY.past.pop();
+    if(!last) return;
+    const inv = invert(last);
+    apply(inv);
+    HISTORY.future.push(last);
+    updateUndoRedoButtons();
+    // Undo操作自体を“記録”には残す
+    if(RECORDING && SESSION){ appendEventLogView({ id: ++OP_ID, type: Action.UNDO, ts: Date.now(), meta:{ targetId: last.id } }); SESSION.events.push({ id: OP_ID, type: Action.UNDO, ts: Date.now(), meta:{ targetId: last.id } }); }
+  });
+  btnRedo && (btnRedo.onclick = ()=>{
+    const next = HISTORY.future.pop();
+    if(!next) return;
+    apply(next);
+    HISTORY.past.push(next);
+    updateUndoRedoButtons();
+    if(RECORDING && SESSION){ appendEventLogView({ id: ++OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); SESSION.events.push({ id: OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); }
+  });
+  btnRec  && (btnRec.onclick  = ()=> RECORDING ? endRecording() : beginRecording());
+
+  // Ctrl/Cmd+Z（Undo）、Ctrl+Y or Shift+Ctrl/Cmd+Z（Redo）
+  document.addEventListener('keydown', (e)=>{
+    const tag = (e.target && e.target.tagName) || '';
+    if(tag==='INPUT' || tag==='TEXTAREA' || e.isComposing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if(!mod) return;
+    const k = (e.key||'').toLowerCase();
+    if(k==='z' && !e.shiftKey){ e.preventDefault(); btnUndo?.click(); return; }
+    if(k==='y' || (k==='z' && e.shiftKey)){ e.preventDefault(); btnRedo?.click(); return; }
+  });
+  updateUndoRedoButtons();
+})();
+
+/**
+ * 選択中カードを左右の隣と入れ替える（横並びゾーンのみ）
+ * @param {number} dir +1: 右と入れ替え / -1: 左と入れ替え
+ * @returns {boolean} 実際に入れ替えを行ったら true
+ */
+function swapSelectedWithNeighbor(dir){
+ if(!selectedUID) return false;
+ const card = findCard(selectedUID);
+ if(!card) return false;
+ const zone = card.zone;
+ const HZ = new Set(['HAND','DECK','T_DECK','SIDEDECK']);
+ if(!HZ.has(zone)) return false; // 横並び以外は対象外
+
+ // ソートON中は入れ替え禁止（仕様）
+ if ((zone==='HAND' && $('#sortHand')?.checked) ||
+ (zone==='DECK' && $('#sortDeck')?.checked) ||
+ (zone==='SIDEDECK' && $('#sortSide')?.checked)){
+ log(`${zone} はソートONのため入れ替えできません`);
+ return false;
+ }
+
+ const arr = ZONES[zone];
+ const i = arr.findIndex(x => x.uid === selectedUID);
+ if(i < 0) return false;
+ const j = i + (dir > 0 ? 1 : -1);
+ if(j < 0 || j >= arr.length) return false; // 端は無視（仕様）
+
+ const a = arr[i], b = arr[j];
+ [arr[i], arr[j]] = [b, a];
+
+ // 再描画（selectedUID を見て renderZone 側が枠を付与）
+ const el = zoneToEl(zone);
+ if (el) renderZone(zone, el);
+
+ log(`${displayName(a)} と ${displayName(b)} の順番を入れ替え（${zone} ${i+1}↔${j+1}）`);
+ return true;
+}
 //キーボードショートカット
 document.addEventListener('keydown', (e)=>{
-  const uid = selectedUID; if (!uid) return;
   // 入力要素内では無効
   const tag = (e.target && e.target.tagName) || '';
   if(tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
 
   // 修飾キーが一つでも押されていたら無視
-  if( e.ctrlKey || e.altKey || e.metaKey) return;
+  if(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
 
-  const c = findCard(uid); if(!c) return;
-  const arr = ZONES[c.zone] || []; const i = arr.findIndex(x => x.uid === uid)
-  if( i < 0) return; 
-  
-  if (e.key === 'ArrowLeft'){
-    const prev = arr[i-1] || arr[arr.length-1];
-    if (prev){ selectCard(prev.uid); e.preventDefault(); }
-  } else if (e.key === 'ArrowRight'){
-    const next = arr[i+1] || arr[0];
-    if (next){ selectCard(next.uid); e.preventDefault(); }
-  } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown'){
-    // 任意：縦のゾーン間移動を定義（例：HAND→BATTLEFIELD）
-    const nextZone = (e.key==='ArrowUp') ? 'BATTLEFIELD' : 'HAND';
-    const targetArr = ZONES[nextZone] || [];
-    if (targetArr.length){
-      selectCard(targetArr[Math.min(i, targetArr.length-1)].uid);
-      e.preventDefault();
-    }
-  }
+ // ← / → で隣と入れ替え（実行できた場合のみ既定動作を抑止）
+ if (e.key === 'ArrowRight' || e.key?.toLowerCase?.() === 'arrowright'){
+ if (swapSelectedWithNeighbor(+1)) { e.preventDefault(); }
+ return;
+ }
+ if (e.key === 'ArrowLeft' || e.key?.toLowerCase?.() === 'arrowleft'){
+ if (swapSelectedWithNeighbor(-1)) { e.preventDefault(); }
+ return;
+ }
 
   const k = e.key.toLowerCase();
   if(k==='d'){ /* ドロー */ drawFromMain(); e.preventDefault(); }
@@ -1342,5 +1659,7 @@ document.addEventListener('keydown', (e)=>{
     if(isRecording){ toggleRecording(); } // 記録停止→自動保存
     e.preventDefault();
   }
-  
 });
+
+window.onDragOver = onDragOver;
+window.onDrop = onDrop;

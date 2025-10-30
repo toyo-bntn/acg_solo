@@ -1,6 +1,7 @@
 :root{
   --bg:#fafafa; --panel:#edf0f7; --panel2:#f6f6f6; --border:#a3a3a3;
-  --text:#18202a; --muted:#1d2632; --accent:#db4848; --danger:#cc0000; --ok:#2fa572;
+  --text:#18202a; --muted:#1d2632; --accent:#db4848; --hover:#000000 ; --danger:#cc0000; --ok:#2fa572;
+  --effect: #ffd54d;--effect-bfr:#ffc400 ; --effect-rgb: 255,213,77;  --fx-ease: cubic-bezier(.2,.8,.2,1); 
 
   /* 左カラム幅/中央最小幅/右カラム幅（必要ならここで調整） */
   --col-left: 260px;
@@ -159,6 +160,7 @@
     gap:2px; 
     overflow-x:auto; 
     overflow-y: hidden;
+    padding-top: 12px;
     padding-bottom:4px
   }
 /* ★ 領地の重ね（20%） */
@@ -181,7 +183,12 @@
     position:relative; 
     user-select:none; 
     overflow:hidden; 
-    flex-shrink:0
+    flex-shrink:0;
+   /* === hover-lift 合成 === */
+    --lift: 0; /* デフォルトは持ち上げなし */
+    transform: translateY(var(--lift, 0)) rotate(var(--rot-card, 0deg));
+    transition: transform 120ms ease, box-shadow 120ms ease;
+    will-change: transform;
   }
   .imgWrap{position:absolute; inset:0; background: transparent; overflow: hidden; border-radius: var(--card-radius);}
   .card img{width:100%; height:100%; object-fit:cover; display:block}
@@ -238,7 +245,7 @@
   .rows{display:grid; gap:4px}
   .twoCol{display:grid; grid-template-columns:1fr auto; gap:4px; align-items:center}
   .danger{color:#ffb1b1}
-  .zone[data-zone="DECK"] .content, .zone[data-zone="T_DECK"] .content{padding:2px}
+  .zone[data-zone="DECK"] .content, .zone[data-zone="T_DECK"] .content{padding:2px; padding-top: 12px;}
   .small{transform:scale(.92); transform-origin:top left}
   .zone .hrow .card{cursor:grab}
   .zone .vstack .card{cursor:grab}
@@ -248,6 +255,10 @@
     gap:0;
     padding:4px;
   }
+/* hover-lift: 上方向の持ち上げが切れないよう top 余白を足す */
+.deckStrip, .tdeckStrip, #sideDeck{
+  padding-top: 12px;  /* 既存の padding:4px よりも上書きされる */
+}
 /* HAND のカードを重ねて表示（左重なり） */
 .handStrip.hrow { gap: 0; }                 /* gap があると重なりに効くので 0 に */
 .handStrip .card { margin-left: -3%; }     /* ご要望通り */
@@ -258,6 +269,37 @@
 /* :has は対応ブラウザなら便利（選択中カードを前面に） */
 @supports(selector(:has(.x))){
   .handStrip .card:has(.imgWrap.selected){ z-index: 10; }
+}
+/* =========================================
++ Hover Lift（全ゾーン + サイドデッキ）
++ -10px 持ち上げ / 影: ふつう / 前面化 z-index 高め
++========================================= */
+.handStrip .card:hover,
+.deckStrip .card:hover,
+.tdeckStrip .card:hover,
+.hrow .card:hover,
+.pileCols .card:hover,
+#territory .card:hover,
+#sideDeck .card:hover,
+.zone[data-zone="SIDEDECK"] .card:hover{
+ --lift: -10px;
+ z-index: 2000 !important; /* JSの inline zIndex より優先させる */
+ box-shadow: 0 8px 16px rgba(0,0,0,.25);
+}
+
+/* 視覚だけ“選択風”に（状態は変えない） */
+.card:hover .imgWrap::after{
+ content:"";
+ position:absolute; inset:0;
+ border:1px solid var(--hover); /* 実選択と同じ太さ */
+ border-radius:3px;
+ pointer-events:none;
+}
+
+/* ドラッグ中はホバー演出を無効化 */
+.dragging .card:hover{
+ --lift: 0;
+ box-shadow: none;
 }
   .deckStrip .card{
     margin-left:-3%;
@@ -277,6 +319,7 @@
 .tdeckStrip .card:hover{
   z-index: 5;           /* ホバー中は前面 */
 }
+
 
 /* 選択中（画像に枠）も前面に：:has 対応ブラウザで */
 @supports(selector(:has(.x))){
@@ -307,6 +350,7 @@
   display: block;
   overflow: auto;       /* FREEは“欄を拡大”したいので縦スクロールにしない */
   min-height: var(--card-h)!important;   /* カード1枚ぶん */
+  padding-top: 12px;
 }
 .pileCols .card{
   position: absolute;      /* JSでleft/top/z-indexを与える */
@@ -391,21 +435,106 @@
   background-color:var(--accent);
   color :var(--bg);
 }
+.reorder-on .card { transition: transform 80ms; }
+.card.reorder-before { outline: 2px dashed var(--accent, #888); outline-offset: -6px; }
 
-/* === Replay Ghost Animation (ghost move across zones) === */
-.ghostCard{
-position: fixed; /* viewport 基準で矩形合わせが簡単 */
-left: 0; top: 0;
-width: var(--card-w);
-height: var(--card-h);
-pointer-events: none;
-z-index: 10000;
-will-change: transform, opacity;
-transition: transform 380ms ease, opacity 120ms ease-in;
+/* キーボード操作時のみフォーカスリングを見せる */
+.card:focus-visible{
+  outline: 3px solid var(--focus, #5aa7ff);
+  outline-offset: 2px;
 }
-.ghostCard img{
-width: 100%; height: 100%; display: block; object-fit: cover;
-border-radius: 10px;
+
+/* 視覚的に画面外に隠す汎用クラス（スクリーンリーダーには読まれる） */
+.sr-only {
+  position: absolute !important;
+  width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;
 }
-/* ゴースト移動中、目的地の実体カードは一時的に不可視にする */
-.card.ghost-hidden{ opacity: 0; }
+
+/* FREE 見出しの中だけレイアウト変更：折り返しを許可 */
+#zone-free h3{
+  flex-wrap: wrap;          /* 2行構成にできるようにする */
+  align-items: baseline;    /* 1行目のFREEとツールバーの揃え */
+}
+
+/* 「ﾄｰｸﾝ」ボタンだけを2行目の左端へ */
+#zone-free #btnToken{
+  order: 2;                 /* 2行目に送る（数値が大きいほど後） */
+  flex-basis: 100%;         /* 1列ぶん使って改行させる */
+  align-self: flex-start;   /* 左端に寄せる */
+  margin-top: 4px;          /* 上に少し余白 */
+}
+
+/* ツールバーは1行目の右端キープ */
+#zone-free .toolbar{
+  order: 1;                 /* FREEテキストの次（同じ1行目） */
+  margin-left: auto;        /* 右端へ寄せる */
+}
+/* FREEのツールバー内：カウンターを1行横並び＋横スクロール */
+#zone-free .toolbar .counterPalette{
+  display: flex;          /* 2x2のgridを上書きして横並びに */
+  flex-wrap: nowrap;      /* 折り返さない */
+  gap: 6px;               /* お好みで */
+  overflow-x: auto;       /* はみ出したら横スクロール */
+  scrollbar-width: thin;  /* Firefox用（任意） */
+}
+#zone-free .toolbar .counterPalette .paletteItem{
+  flex: 0 0 auto;         /* 縮めない＝一個ずつ横に並べる */
+  width: auto;            /* もし固定幅があれば上書き */
+  white-space: nowrap;    /* ラベルを折り返さない */
+}
+
+/*==========
+アニメーション
+===========*/
+@keyframes fx-zoom-card {
+  0%   { transform: translateY(var(--lift,0)) rotate(var(--rot-card,0)) scale(1); }
+  60%  { transform: translateY(var(--lift,0)) rotate(var(--rot-card,0)) scale(1.05); }
+  85%  { transform: translateY(var(--lift,0)) rotate(var(--rot-card,0)) scale(1.03); }
+  100% { transform: translateY(var(--lift,0)) rotate(var(--rot-card,0)) scale(1); }
+}
+@keyframes fx-zoom {
+ 0% { transform: scale(1); }
+ 45% { transform: scale(1); }
+ 100% { transform: scale(1); }
+}
+@keyframes fx-shine {
+ 0% { transform: translateX(-130%) rotate(15deg); opacity: 0; }
+ 10% { opacity: .85; }
+ 60% { opacity: .85; }
+ 100% { transform: translateX(130%) rotate(15deg); opacity: 0; }
+}
+/* 一瞬発火エフェクト（拡大→戻し + シャイン） */
+.fx-burst .imgWrap{
+ animation: none;
+}
+.card.fx-burst{
+  animation: fx-zoom-card 700ms var(--fx-ease) both;  /* シャインが3sなら合わせて3s */
+  will-change: transform;  /* 合成の安定化 */
+}
+.fx-burst .imgWrap::after{
+ content: "";
+ position: absolute; inset: -100%;
+ border-radius: inherit;
+ pointer-events: none;
+ background: linear-gradient(120deg,
+ rgba(var(--effect-rgb),0) 0%,
+ rgba(var(--effect-rgb),.60) 40%,
+ rgba(var(--effect-rgb),.90) 50%,
+ rgba(var(--effect-rgb),.30) 60%,
+ rgba(var(--effect-rgb),.10) 70%,
+ rgba(var(--effect-rgb),0) 100%);
+ mix-blend-mode: screen; /* 画像上で光らせる */
+ filter: blur(10px);
+ transform: translateX(-130%) rotate(15deg);
+ animation: fx-shine 2000ms var(--fx-ease) forwards;
+}
+
+/* ===== 操作ログUI ===== */
+#zone-log .toolbar .btn[disabled]{ opacity:.5; cursor:not-allowed; }
+#logBox .entry{ border-bottom:1px dashed var(--border); padding:2px 0; }
+#logBox details{ margin:2px 0; }
+#logBox pre{ font-size:11px; background:transparent; margin:2px 0 0; }
+/*=======================================================
+ === Replay Ghost Animation (ghost move across zones) === 
+ ======================================================== */

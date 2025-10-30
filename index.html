@@ -128,12 +128,13 @@
   <div class="leftpane">
   <section class="zone" id="zone-free">
     <h3>FREE
+      <button class="btn sm" id="btnToken">ﾄｰｸﾝ</button>
       <span class="toolbar">
         <span class="counterPalette" id="counterPalette">
           <span class="paletteItem" draggable="true" data-ctype="p1p1">+1/+1</span>
           <span class="paletteItem" draggable="true" data-ctype="plus1">[+1]</span>
+          <span class="paletteItem" draggable="true" data-ctype="effect_on">[効果]</span>
         </span>
-        <button class="btn sm" id="btnToken">ﾄｰｸﾝ生成</button>
       </span>
     </h3>
     <div class="content" data-zone="FREE" ondragover="onDragOver(event)" ondrop="onDrop(event)"></div>
@@ -153,8 +154,11 @@
   </section>
 
   <section class="zone" id="zone-log">
-    <h3>操作ログ <span class="toolbar"><button class="btn sm" id="btnRecord">●記録開始</button></span></h3>
-    <div class="log" id="logBox"></div>
+<h3>操作ログ <span class="toolbar">
+<button class="btn sm" id="btnUndo" disabled>元に戻す</button>
+<button class="btn sm" id="btnRedo" disabled>やり直す</button>
+<button class="btn sm" id="btnRecord">記録開始</button>
+</span></h3>    <div class="log" id="logBox"></div>
   </section>
   </div>
 
@@ -232,6 +236,5 @@
 
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script type="module" src="script.js"></script>
-<div id="a11y-live" aria-live="polite" class="sr-only"></div>
 </body>
 </html>
