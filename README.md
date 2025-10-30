@@ -32,3 +32,4 @@ index.html, style.css, script.js で構成されています．
 ## 参考にしたプロジェクト
 - SparkNahito / [ACGCardSimulator](https://github.com/SparkNahito/ACGCardSimulator/tree/main/AcgPlaySimulator)
 - fugart / [solo-mode](https://fugarta.github.io/solo-mode/)
+- miyauchi / [Duel Simulator](https://duel-simulator.miyauchidp.dev/)
