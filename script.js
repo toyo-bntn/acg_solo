@@ -145,11 +145,23 @@ function pickFromSelectedFolder(baseName) {
 }
 
 function wakeAllTerritory(){
-  for(const c of ZONES.T_FIELD){
-    c.faceUp = true;
-    c.rot = 0;
+  const terrs = [...ZONES.T_FIELD];
+
+  __CTX = 'wake';
+  try{
+    for(const c of terrs){
+      if(!c.faceUp){ toggleFace(c.uid); }
+      // 裏なら表にする（Action.FLIP が積まれる）
+      // rot が 0 以外なら縦に戻す（Action.ROTATE が積まれる）
+      if(c.rot % 180 !== 0){   // 90° / 270° を想定
+        toggleTap(c.uid, 0);   // deg は元の toggleTap 側では無視される実装
+      }
+    }
+  } finally {
+    __CTX = null;
   }
-  log('領地のカードを起床');  // ← 後述の“名前表示ログ”対応済みlog
+
+  log('領地のカードを起床');
   renderZone('T_FIELD', $('#territory'), {row:true});
 }
 $('#btnWakeTerritory')?.addEventListener('click', wakeAllTerritory);
@@ -267,6 +279,7 @@ function idToCardNoMain(id){
   if(1 <= id && id <= 164) return 'ACG-' + pad3(id);
   if(5001 <= id && id <= 5079) return 'BP1-' + pad3(id - 5000);
   if(5101 <= id && id <= 5180) return 'BP2-' + pad3(id - 5100);
+  if(5201 <= id && id <= 5280) return 'BP3-' + pad3(id - 5200);
   console.warn('未知のmainDeck ID', id);
   return 'ACG-' + pad3(id);
 }
@@ -880,18 +893,30 @@ function shuffle(arr){
 }
 function drawFromMain(){
   if(ZONES.DECK.length===0){ log('デッキ切れ'); return; }
-  const c = ZONES.DECK.shift();
-  c.zone='HAND'; c.faceUp=true;
-  ZONES.HAND.push(c);
-  log(`${displayName(c)} をドロー`);
+  const c = ZONES.DECK[0];
+  __CTX = 'draw:main';
+  try{
+    moveCardTo(c.uid, 'HAND');
+  } finally {
+    __CTX = null;
+  }
+  const moved = findCard(c.uid);
+  if(moved){ moved.faceUp = true; }
+  log(`${displayName(moved||c)} をドロー`);
   renderAll();
 }
 function drawFromTDeck(){
   if(ZONES.T_DECK.length===0){ log('領土デッキ切れ'); return; }
-  const c = ZONES.T_DECK.shift();
-  c.zone='T_FIELD'; c.faceUp=true;
-  ZONES.T_FIELD.push(c);
-  log(`${displayName(c)} を領土へ補充`);
+  const c = ZONES.T_DECK[0];
+  __CTX = 'draw:tdeck';
+  try{
+    moveCardTo(c.uid, 'T_FIELD');
+  } finally {
+    __CTX = null;
+  }
+  const moved = findCard(c.uid);
+  if(moved){ moved.faceUp = true; }
+  log(`${displayName(moved||c)} を領土へ補充`);
   renderAll();
 }
 function initDraw7(){
@@ -1134,8 +1159,26 @@ $('#btnDrawFromDeck').onclick = ()=> drawFromMain();
 $('#btnShuffleTerr').onclick = ()=>{ shuffle(ZONES.T_DECK); renderAll(); log('領土デッキをシャッフル'); };
 $('#btnDrawFromTDeck').onclick = ()=> drawFromTDeck();
 $('#btnDraw1').onclick = ()=> drawFromMain();
-$('#btnInit7').onclick = ()=> initDraw7();
-$('#btnReset7').onclick = ()=> resetBoard();
+$('#btnInit7').onclick = ()=>{
+  __SILENT = true;
+  try{
+    initDraw7();        // 中では drawFromMain() を呼ぶが、ここでは記録しない
+  } finally {
+    __SILENT = false;
+  }
+  clearHistory();       // HISTORY.past / future を空にする
+  log('初手を引き直しました（履歴をリセット）');
+};
+$('#btnReset7').onclick = ()=>{
+  __SILENT = true;
+  try{
+    resetBoard();       // 盤面を初期状態に戻す
+  } finally {
+    __SILENT = false;
+  }
+  clearHistory();
+  log('盤面をリセット（履歴をリセット）');
+};
 $('#btnShot').onclick = ()=> takeScreenshot();
 $('#btnExport').onclick = ()=> exportState();
 $('#btnImport').onclick = ()=> openFilePicker('.json', importState);
@@ -1178,9 +1221,17 @@ $('#resetSideDeck').onclick = () => {
 $('#btnDealToFree').onclick = ()=>{
   if(ZONES.DECK.length === 0){ log('デッキ切れ'); return; }
   const c = ZONES.DECK[0];            // shift() せずにUIDを取得
-  moveCardTo(c.uid, 'FREE');          // ← ラッパー経由で pushAction('move')
+  __CTX = 'btnDealToFree';
+  try{
+    moveCardTo(c.uid, 'FREE'); // 1. DECK → FREE（Action.MOVE）
+    const moved = findCard(c.uid); // 2. 裏なら表向きにする（Action.FLIP）
+    if(moved && !moved.faceUp){
+      toggleFace(moved.uid);
+    }
+  } finally {
+    __CTX = null;
+  }
   const moved = findCard(c.uid);
-  if(moved){ moved.faceUp = true; }
   renderAll();
   log(`${displayName(moved||c)} を FREE へ`);
 };
@@ -1193,7 +1244,6 @@ document.getElementById('btnSideClose')?.addEventListener('click', ()=>{
 });
         
 //カウンターパレット → カードへドロップ
-
 let typ = null;
 $$('#counterPalette .paletteItem').forEach(el=>{
   el.addEventListener('dragstart', (e)=>{
@@ -1231,19 +1281,99 @@ document.addEventListener('drop', (e)=>{
     return;
   }  
 
-  if(!data.startsWith('COUNTER:')) {
-    const target = e.target.closest('.card');
-    if(!target) return;
-    const uid = target.dataset.uid;
+  if(data.startsWith('COUNTER:')) {
+    const cardEl = e.target.closest('.card')
+     || document.elementsFromPoint(e.clientX, e.clientY)?.closest('.card');
+    if (!cardEl) return;
+
+    const uid = cardEl.dataset.uid;
     const typ = data.split(':')[1];
-    const c = findCard(uid);
-    if(!c) return;
+    const card = findCard(uid);
+    if(!card) return;
+
+    const beforeSnap = snapshotCard(card);
+    const beforeVal = beforeSnap.counters?.[typ] || 0;
+
     adjustCounter(uid, typ, +1)
-    log(`${displayName(c)} にカウンターを追加 (${typ})`);
+
+    const afterSnap = snapshotCard(card);
+    const afterVal  = afterSnap.counters?.[typ] || 0;
+    const delta     = afterVal -beforeVal;
+
+    // 履歴に積む（apply() 中の __SILENT=true のときは記録しない）
+    if (!__SILENT && delta !== 0) {
+      const ev = {
+        id:   ++OP_ID,
+        type: Action.COUNTER,
+        ts:   Date.now(),
+        card: afterSnap,          // 「その操作後のカード状態」
+        prev: beforeSnap,
+        next: afterSnap,
+        meta: { ctype: typ, delta, via: 'palette' },
+      };
+      recordAndPush(ev);
+    }
+    log(`${displayName(card)} にカウンターを追加 (${typ})`);
     e.stopPropagation();
     return;
   }
 });
+
+// カード移動のアニメーション//
+function animateCardMove(uid, fromSnap, toSnap, doApplyMove){
+  const realBefore = document.querySelector(`.card[data-uid="${uid}"]`);
+  if (!realBefore) {
+    // 見つからない場合はアニメなしで適用
+    doApplyMove();
+    return;
+  }
+
+  // 1. 現在位置（from）の rect を取得
+  const fromRect = realBefore.getBoundingClientRect();
+
+  // 2. 内部状態 + DOM を目的位置に更新（ただしカード本体は一時的に透明に）
+  doApplyMove();  // ← applyMove 相当（ZONES更新 + renderAll や renderZonesOf）
+
+  const realAfter = document.querySelector(`.card[data-uid="${uid}"]`);
+  if (!realAfter) {
+    // 何らかの理由で消えていたら諦める
+    return;
+  }
+
+  // 実体カードは透過しておく（アニメ中見えないように）
+  realAfter.style.opacity = '0';
+
+  const toRect = realAfter.getBoundingClientRect();
+
+  // 3. ゴースト DOM を生成（before の見た目をコピー）
+  const ghost = realBefore.cloneNode(true);
+  ghost.classList.add('card-ghost');
+
+  // fixed 座標に合わせて配置
+  ghost.style.left = fromRect.left + 'px';
+  ghost.style.top  = fromRect.top + 'px';
+
+  // transform を初期化（from位置）
+  ghost.style.transform = 'translate(0px, 0px)';
+
+  document.body.appendChild(ghost);
+
+  // 次フレームで to 位置まで transform
+  const dx = toRect.left - fromRect.left;
+  const dy = toRect.top  - fromRect.top;
+
+  requestAnimationFrame(()=>{
+    ghost.style.transform = `translate(${dx}px, ${dy}px)`;
+  });
+
+  // 4. アニメ終了後にゴースト削除 & 実体カード表示
+  const onEnd = ()=>{
+    ghost.removeEventListener('transitionend', onEnd);
+    ghost.remove();
+    realAfter.style.opacity = '';
+  };
+  ghost.addEventListener('transitionend', onEnd);
+}
 
 // ===============================
 // 操作ログ / Undo-Redo / 録画エンジン
@@ -1255,6 +1385,13 @@ let OP_ID = 0;                    // 通し番号
 const HISTORY = { past: [], future: [] }; // Undo/Redo 用（通常操作のみ）
 let RECORDING = false;            // 録画ON/OFF
 let SESSION = null;               // { startedAt, startIndex, events: [] }
+
+function clearHistory(){
+  HISTORY.past.length = 0;
+  HISTORY.future.length = 0;
+  OP_ID = 0;
+  updateUndoRedoButtons();
+}
 
 function pad2(n){ return String(n).padStart(2,'0'); }
 function nowISO(){ return new Date().toISOString(); }
@@ -1385,14 +1522,30 @@ function invert(ev){
   }
   return { id: ++OP_ID, ...base };
 }
-function apply(ev){
+function apply(ev, opts = {}){
+  const animate = !!opts.animate;
   // 既存関数をラップしない“サイレント”実行
   __SILENT = true;
   try{
     switch(ev.type){
       case Action.MOVE:
-        if(ev.next?.zone && ev.card?.uid){ moveCardTo(ev.card.uid, ev.next.zone); }
-        break;
+        if(ev.next?.zone && ev.card?.uid){ 
+          const uid      = ev.card.uid;
+          const fromSnap = ev.prev || ev.card || ev.next;
+          const toSnap   = ev.next || ev.card;
+          
+          const doApplyMove = () => {
+          moveCardTo(ev.card.uid, ev.next.zone); 
+        };
+
+        if (animate){
+        animateCardMove(uid, fromSnap, toSnap, doApplyMove);
+        } else {
+          doApplyMove();
+        }
+      }
+      break;
+      
       case Action.FLIP:
         if(ev.card?.uid){ toggleFace(ev.card.uid); }
         break;
@@ -1407,7 +1560,12 @@ function apply(ev){
         if(ev.meta?.zone==='T_DECK'){ ZONES.T_DECK = orderByUID(ZONES.T_DECK, ev.next?.order||[]); renderAll(); }
         break;
       case Action.CREATE:
-        if(ev.card?.cardNo==='TOKEN'){ createToken(); }
+        if(ev.card?.cardNo==='TOKEN'){ 
+          const c = createToken();
+          const snap = snapshotCard(c); 
+          ev.card = snap;
+          ev.next = snap;
+        }
         break;
       case Action.DESTROY:
         if(ev.card?.uid){ removeCard(ev.card.uid); renderAll(); }
@@ -1429,18 +1587,55 @@ function orderByUID(arr, uidOrder){
 (function(){
   // move
   const _move = moveCardTo;
-  window.moveCardTo = function(uid, newZone){
-    const before = snapshotCard(findCard(uid));
+  function wrappedMoveCardTo(uid, newZone){
+    const cardBefore = findCard(uid);
+    const beforeSnap = snapshotCard(cardBefore);
+    const isTok      = cardBefore && isToken(cardBefore);
+
     const res = _move(uid, newZone);
-    const after  = snapshotCard(findCard(uid));
+
+    const cardAfter = findCard(uid);
+    const afterSnap  = snapshotCard(cardAfter);
+
     if(__SILENT) return res;
-    const ev = { id: ++OP_ID, type: Action.MOVE, ts: Date.now(), card: after||before, prev: before, next: after, meta: { via: (__CTX||'user') } };
+
+    // ★ トークンが GRAVE / BANISH / HAND に送られたときは「消滅」として記録
+    if (isTok && (newZone === 'GRAVE' || newZone === 'BANISH' || newZone === 'HAND')) {
+      const ev = {
+        id:   ++OP_ID,
+        type: Action.DESTROY,
+        ts:   Date.now(),
+        card: beforeSnap,      // 消滅直前の状態
+        prev: beforeSnap,
+        next: null,
+        meta: {
+          from: beforeSnap?.zone,
+          to:   newZone,
+          via:  (__CTX || 'user'),
+        },
+      };
+      recordAndPush(ev);
+      return res;
+    }
+
+    // 通常のカード移動はこれまで通り MOVE で記録
+    const ev = {
+      id:   ++OP_ID,
+      type: Action.MOVE,
+      ts:   Date.now(),
+      card: afterSnap || beforeSnap,
+      prev: beforeSnap,
+      next: afterSnap,
+      meta: { via: (__CTX || 'user') },
+    };
     recordAndPush(ev);
     return res;
-  };
+  }
+  moveCardTo = wrappedMoveCardTo;
+  window.moveCardTo = wrappedMoveCardTo;  
   // flip
   const _flip = toggleFace;
-  window.toggleFace = function(uid){
+  function wrappedToggleFace(uid){
     const before = snapshotCard(findCard(uid));
     const res = _flip(uid);
     const after  = snapshotCard(findCard(uid));
@@ -1448,10 +1643,12 @@ function orderByUID(arr, uidOrder){
     const ev = { id: ++OP_ID, type: Action.FLIP, ts: Date.now(), card: after||before, prev: before, next: after };
     recordAndPush(ev);
     return res;
-  };
+  }
+  toggleFace = wrappedToggleFace;
+  window.toggleFace = wrappedToggleFace;
   // rotate
   const _tap = toggleTap;
-  window.toggleTap = function(uid, deg){
+  function wrappedToggleTap(uid, deg){
     const before = snapshotCard(findCard(uid));
     const res = _tap(uid, deg);
     const after  = snapshotCard(findCard(uid));
@@ -1459,40 +1656,61 @@ function orderByUID(arr, uidOrder){
     const ev = { id: ++OP_ID, type: Action.ROTATE, ts: Date.now(), card: after||before, prev: before, next: after };
     recordAndPush(ev);
     return res;
-  };
+  }
+  toggleTap = wrappedToggleTap;
+  window.toggleTap = wrappedToggleTap;
   // token create
   const _createToken = createToken;
-  window.createToken = function(){
+  function wrappedCreateToken(){
     const c = _createToken();
     if(__SILENT) return c;
     const snap = snapshotCard(c);
     const ev = { id: ++OP_ID, type: Action.CREATE, ts: Date.now(), card: snap, next: snap };
     recordAndPush(ev);
     return c;
-  };
+  }
+  createToken = wrappedCreateToken;
+  window.createToken = wrappedCreateToken;
   // effect
   const _fx = triggerShineEffect;
-  window.triggerShineEffect = function(uid){
+  function wrappedTriggerShineEffect(uid){
     const res = _fx(uid);
     if(__SILENT) return res;
     const c = snapshotCard(findCard(uid));
     const ev = { id: ++OP_ID, type: Action.EFFECT, ts: Date.now(), card: c };
     recordAndPush(ev);
     return res;
-  };
+  }
+  triggerShineEffect = wrappedTriggerShineEffect;
+  window.triggerShineEffect = wrappedTriggerShineEffect;
   // draw wrappers（move に via=draw を付与）
   const _drawMain = drawFromMain;
-  window.drawFromMain = function(){ __CTX='draw:main'; const r=_drawMain(); __CTX=null; return r; };
+  function wrappedDrawFromMain(){ 
+    __CTX='draw:main'; 
+    const r=_drawMain(); 
+    __CTX=null; 
+    return r; 
+  }
+  drawFromMain = wrappedDrawFromMain;
+  window.drawFromMain = wrappedDrawFromMain;
   const _drawTD = drawFromTDeck;
-  window.drawFromTDeck = function(){ __CTX='draw:tdeck'; const r=_drawTD(); __CTX=null; return r; };
+  function wrappedDrawFromDeck(){ 
+    __CTX='draw:tdeck'; 
+    const r=_drawTD(); 
+    __CTX=null; 
+    return r; 
+  }
+  drawFromTDeck = wrappedDrawFromDeck;
+  window.drawFromDeck = wrappedDrawFromDeck;
   // カウンター調整：showCtrMenu 経由の操作をフック（差分検出）
   const _showCtrMenu = showCtrMenu;
   let __ctrCtx = null; // {uid, typ, before}
-  window.showCtrMenu = function(uid, typ, anchor){
+  function wrappedShowCtrMenu(uid, typ, anchor){
     const c = findCard(uid);
     __ctrCtx = { uid, typ, before: (c?.counters?.[typ]||0) };
     return _showCtrMenu(uid, typ, anchor);
-  };
+  }
+  window.showCtrMenu = wrappedShowCtrMenu;
   document.addEventListener('click', (e)=>{
     // ctrMenuが開いている間のボタン操作を検出（次tickで差分確認）
     if(!__ctrCtx) return;
@@ -1555,18 +1773,39 @@ function orderByUID(arr, uidOrder){
   btnUndo && (btnUndo.onclick = ()=>{
     const last = HISTORY.past.pop();
     if(!last) return;
+
     const inv = invert(last);
-    apply(inv);
+    apply(inv, { animate: true });
+
+  // ★ トークン消滅を Undo した場合、
+  //    DESTROY 側の ev.card も “新しく生成されたトークン” の uid で上書きする
+  if (last.type === Action.DESTROY &&
+      inv.type  === Action.CREATE &&
+      inv.card?.cardNo === 'TOKEN' &&
+      inv.card?.uid) {
+    last.card = { ...inv.card };   // prev も揃えたければ last.prev も上書き
+    if (last.prev) last.prev = { ...inv.card };
+  }
     HISTORY.future.push(last);
     updateUndoRedoButtons();
     // Undo操作自体を“記録”には残す
-    if(RECORDING && SESSION){ appendEventLogView({ id: ++OP_ID, type: Action.UNDO, ts: Date.now(), meta:{ targetId: last.id } }); SESSION.events.push({ id: OP_ID, type: Action.UNDO, ts: Date.now(), meta:{ targetId: last.id } }); }
+    if(RECORDING && SESSION){ 
+      const logEv = { 
+        id: ++OP_ID, 
+        type: Action.UNDO, 
+        ts: Date.now(), 
+        meta:{ targetId: last.id } 
+      };
+      appendEventLogView(logEv); 
+      SESSION.events.push(logEv); 
+    }
   });
   btnRedo && (btnRedo.onclick = ()=>{
     const next = HISTORY.future.pop();
     if(!next) return;
-    apply(next);
+
     HISTORY.past.push(next);
+    apply(next, { animate: true });
     updateUndoRedoButtons();
     if(RECORDING && SESSION){ appendEventLogView({ id: ++OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); SESSION.events.push({ id: OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); }
   });
@@ -1656,10 +1895,16 @@ document.addEventListener('keydown', (e)=>{
     e.preventDefault();
   }
   else if(k==='s'){ /* ログ保存（録画トグル停止側）*/
-    if(isRecording){ toggleRecording(); } // 記録停止→自動保存
+    if(RECORDING){ 
+      endRecording();
+    }else{
+      beginRecording();
+    } // 記録停止→自動保存
     e.preventDefault();
   }
 });
 
 window.onDragOver = onDragOver;
 window.onDrop = onDrop;
+
+//https://toyo-bntn.github.io/acg_solo/
