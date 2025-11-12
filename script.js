@@ -16,6 +16,58 @@ const logBox = $('#logBox');
 // const bind = (sel, type, handler) => document.querySelector(sel)?.addEventListener(type, handler);
 let SIDEDECK_TARGET = 0;
 
+function updateHistoryBar(){
+  const slider = document.getElementById('historySlider');
+  const label  = document.getElementById('historyLabel');
+  if(!slider || !label) return;
+
+  const total   = HISTORY.past.length + HISTORY.future.length;
+  const current = HISTORY.past.length;  // ←ここが「今どこまで適用済みか」
+
+  slider.max   = String(total);
+  slider.value = String(current);
+  label.textContent = `${current} / ${total}`;
+}
+function jumpToHistoryIndex(target){
+  target = Math.max(0, Math.floor(target));
+  const total   = HISTORY.past.length + HISTORY.future.length;
+  if(target > total) target = total;
+
+  let current = HISTORY.past.length;
+  let delta   = target - current;
+  if(delta === 0) return;
+
+  // 細かくアニメさせたくないので、ここでは animate:false を推奨
+  const animate = false;
+
+  if(delta > 0){
+    // 先に進める（Redo 相当）
+    while(delta-- > 0 && HISTORY.future.length > 0){
+      const ev = HISTORY.future.pop();
+      HISTORY.past.push(ev);
+      apply(ev, { animate });
+    }
+  } else {
+    // 巻き戻す（Undo 相当）
+    while(delta++ < 0 && HISTORY.past.length > 0){
+      const last = HISTORY.past.pop();
+      const inv  = invert(last);
+      HISTORY.future.push(last);
+      apply(inv, { animate });
+    }
+  }
+
+  updateUndoRedoButtons();
+  updateHistoryBar();
+}
+const slider = document.getElementById('historySlider');
+if(slider){
+  // ドラッグ中もリアルタイムに動かしたければ input
+  slider.addEventListener('change', (e)=>{
+    const target = Number(e.target.value || 0);
+    jumpToHistoryIndex(target);
+  });
+}
 function log(msg){
   const t = new Date();
   const hh = String(t.getHours()).padStart(2,'0');
@@ -23,8 +75,8 @@ function log(msg){
   const ss = String(t.getSeconds()).padStart(2,'0');
   const line = document.createElement('div');
   line.textContent = `[${hh}:${mm}:${ss}] ${msg}`;
-  logBox.appendChild(line);
-  logBox.scrollTop = logBox.scrollHeight;
+  //logBox.appendChild(line);
+  //logBox.scrollTop = logBox.scrollHeight;
 }
 function saveText(filename, text, mime){
   const type = mime || (/\.json$/i.test(filename) ? 'application/json' : 'text/plain');
@@ -810,7 +862,7 @@ function triggerShineEffect(uid){
   el.classList.remove('fx-burst');   // 付け直しで再生させる
   void el.offsetWidth;               // reflow
   el.classList.add('fx-burst');
-  setTimeout(()=> el.classList.remove('fx-burst'), 2500); // 念のため自動クリア
+  setTimeout(()=> el.classList.remove('fx-burst'), 2001); // 念のため自動クリア
 }
 
 //ドラッグ＆ドロップ / ゾーン移動
@@ -1200,7 +1252,13 @@ $('#btnReloadDeck').onclick = ()=>{
         overlay.classList.add('hidden');   // 既に開始後でもオーバーレイは閉じる
         SEED = randomSeed(); $('#seedView').textContent = SEED;
 
-        buildInitialZones(loadedDeckData); // ← 盤面をリセットして新デッキで開始
+        __SILENT = true;
+        try{
+          buildInitialZones(loadedDeckData);      // 盤面を初期状態に戻す
+        } finally {
+        __SILENT = false;
+        }
+        clearHistory();
         log('デッキを再選択: '+file.name);
       }catch(e){
         alert('デッキJSONの読み込みに失敗: '+e.message);
@@ -1213,7 +1271,13 @@ $('#resetSideDeck').onclick = () => {
     // ユーザーに確認を求めるダイアログを表示
     if (confirm("サイドチェンジをリセット")) {
         // 「OK」（確定）が押された場合の処理
-        buildInitialZones(loadedDeckData);
+        __SILENT = true;
+        try{
+          buildInitialZones(loadedDeckData);
+        } finally {
+        __SILENT = false;
+        }
+        clearHistory();
         renderAll();
     }
     // 「キャンセル」が押された場合は何もしない
@@ -1391,7 +1455,36 @@ function clearHistory(){
   HISTORY.future.length = 0;
   OP_ID = 0;
   updateUndoRedoButtons();
+  updateHistoryBar();
 }
+function dumpHistory(){
+  console.log('--- HISTORY.past ---');
+  HISTORY.past.forEach((ev, i)=>{
+    console.log(
+      i,
+      ev.type,
+      'id=', ev.id,
+      'uid=', ev.card?.uid,
+      'meta=', ev.meta
+    );
+  });
+  console.log('--- HISTORY.future ---');
+  HISTORY.future.forEach((ev, i)=>{
+    console.log(
+      i,
+      ev.type,
+      'id=', ev.id,
+      'uid=', ev.card?.uid,
+      'meta=', ev.meta
+    );
+  });
+  console.log('fx-burst cards:',
+    [...document.querySelectorAll('.card.fx-burst')]
+      .map(el => ({ uid: el.dataset.uid, ghost: el.classList.contains('card-ghost') })));
+
+}
+window.dumpHistory = dumpHistory;
+
 
 function pad2(n){ return String(n).padStart(2,'0'); }
 function nowISO(){ return new Date().toISOString(); }
@@ -1480,6 +1573,7 @@ function recordAndPush(ev){
   HISTORY.future.length = 0;        // Redo 破棄
   updateUndoRedoButtons();
   logEventForExport(ev);            // 録画中のみJSON/表示へ
+  updateHistoryBar();
 }
 function invert(ev){
   const baseMeta = { ...(ev.meta || {}) };
@@ -1810,7 +1904,6 @@ function orderByUID(arr, uidOrder){
   btnUndo && (btnUndo.onclick = ()=>{
     const last = HISTORY.past.pop();
     if(!last) return;
-
     const inv = invert(last);
     apply(inv, { animate: true });
 
@@ -1825,6 +1918,7 @@ function orderByUID(arr, uidOrder){
   } 
     HISTORY.future.push(last);
     updateUndoRedoButtons();
+    updateHistoryBar();
     // Undo操作自体を“記録”には残す
     if(RECORDING && SESSION){ 
       const logEv = { 
@@ -1844,6 +1938,7 @@ function orderByUID(arr, uidOrder){
     HISTORY.past.push(next);
     apply(next, { animate: true });
     updateUndoRedoButtons();
+    updateHistoryBar();
     if(RECORDING && SESSION){ appendEventLogView({ id: ++OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); SESSION.events.push({ id: OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); }
   });
   btnRec  && (btnRec.onclick  = ()=> RECORDING ? endRecording() : beginRecording());
