@@ -1385,10 +1385,12 @@ document.addEventListener('drop', (e)=>{
 
 // カード移動のアニメーション//
 function animateCardMove(uid, fromSnap, toSnap, doApplyMove){
-  const realBefore = document.querySelector(`.card[data-uid="${uid}"]`);
+  document.querySelectorAll(`.card-ghost[data-uid="${uid}"]`)
+  .forEach(g => g.remove());
+
+  const realBefore = document.querySelector(`.card:not(.card-ghost)[data-uid="${uid}"]`);
   if (!realBefore) {
-    // 見つからない場合はアニメなしで適用
-    doApplyMove();
+    doApplyMove();// 見つからない場合はアニメなしで適用
     return;
   }
 
@@ -1398,9 +1400,8 @@ function animateCardMove(uid, fromSnap, toSnap, doApplyMove){
   // 2. 内部状態 + DOM を目的位置に更新（ただしカード本体は一時的に透明に）
   doApplyMove();  // ← applyMove 相当（ZONES更新 + renderAll や renderZonesOf）
 
-  const realAfter = document.querySelector(`.card[data-uid="${uid}"]`);
-  if (!realAfter) {
-    // 何らかの理由で消えていたら諦める
+  const realAfter = document.querySelector(`.card:not(.card-ghost)[data-uid="${uid}"]`);
+  if (!realAfter) { // 何らかの理由で消えていたら諦める
     return;
   }
 
@@ -1412,7 +1413,7 @@ function animateCardMove(uid, fromSnap, toSnap, doApplyMove){
   // 3. ゴースト DOM を生成（before の見た目をコピー）
   const ghost = realBefore.cloneNode(true);
   ghost.classList.add('card-ghost');
-
+  ghost.classList.remove('fx-burst');
   // fixed 座標に合わせて配置
   ghost.style.left = fromRect.left + 'px';
   ghost.style.top  = fromRect.top + 'px';
