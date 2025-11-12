@@ -126,6 +126,17 @@
 
   <!-- 左：フリーゾーン + プレビュー + ログ -->
   <div class="leftpane">
+  <section class="zone" id="zone-log">
+    <h3>操作ログ 
+    <span class="toolbar">
+      <button class="btn sm" id="btnUndo" disabled>元に戻す</button>
+      <button class="btn sm" id="btnRedo" disabled>やり直す</button>
+      <button class="btn sm" id="btnRecord">記録開始</button>
+    </span>
+    </h3>
+    <div class="log" id="logBox"></div>
+  </section>
+  
   <section class="zone" id="zone-free">
     <h3>FREE
       <button class="btn sm" id="btnToken">ﾄｰｸﾝ</button>
@@ -151,14 +162,6 @@
         <div id="infoText"></div>
       </div>
     </div>
-  </section>
-
-  <section class="zone" id="zone-log">
-<h3>操作ログ <span class="toolbar">
-<button class="btn sm" id="btnUndo" disabled>元に戻す</button>
-<button class="btn sm" id="btnRedo" disabled>やり直す</button>
-<button class="btn sm" id="btnRecord">記録開始</button>
-</span></h3>    <div class="log" id="logBox"></div>
   </section>
   </div>
 
@@ -238,3 +241,5 @@
 <script type="module" src="script.js"></script>
 </body>
 </html>
+
+<!--https://toyo-bntn.github.io/acg_solo/-->

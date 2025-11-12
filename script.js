@@ -1482,6 +1482,7 @@ function recordAndPush(ev){
   logEventForExport(ev);            // 録画中のみJSON/表示へ
 }
 function invert(ev){
+  const baseMeta = { ...(ev.meta || {}) };
   const base = { ts: Date.now(), card: ev.card, meta: { ...(ev.meta||{}) } };
   if(ev.type===Action.MOVE){
     return { id: ++OP_ID, type: Action.MOVE, ts: Date.now(),
@@ -1507,10 +1508,10 @@ function invert(ev){
   }
   // CREATE/DESTROY/EFFECT/DRAW は“状態の巻き戻し”が曖昧なので最小動作
   if(ev.type===Action.CREATE){
-    return { id: ++OP_ID, type: Action.DESTROY, ts: Date.now(), card: ev.card };
+    return { id: ++OP_ID, type: Action.DESTROY, ts: Date.now(), card: ev.card, prev: ev.prev, next: null, meta: baseMeta, };
   }
   if(ev.type===Action.DESTROY){
-    return { id: ++OP_ID, type: Action.CREATE, ts: Date.now(), card: ev.card, next: ev.next };
+    return { id: ++OP_ID, type: Action.CREATE, ts: Date.now(), card: ev.card, prev: null, next: ev.next, meta: baseMeta, };
   }
   if(ev.type===Action.DRAW){
     // move として逆再生（HAND→DECKトップへ戻す）
@@ -1560,11 +1561,47 @@ function apply(ev, opts = {}){
         if(ev.meta?.zone==='T_DECK'){ ZONES.T_DECK = orderByUID(ZONES.T_DECK, ev.next?.order||[]); renderAll(); }
         break;
       case Action.CREATE:
-        if(ev.card?.cardNo==='TOKEN'){ 
-          const c = createToken();
-          const snap = snapshotCard(c); 
-          ev.card = snap;
-          ev.next = snap;
+        //console.log('[DBG] apply CREATE', ev); //tmp
+        if (ev.card?.cardNo === 'TOKEN') {
+          // 復活させたいゾーン：meta.spawnZone > snapshot.zone > FREE の優先順
+          const spawnZone = ev.meta?.spawnZone || ev.card.zone || 'FREE';
+          const uid       = ev.card.uid;
+          const zone = spawnZone;
+          const arr  = ZONES[zone];
+          const snap = ev.card;
+          
+          if (!arr){
+            console.warn('[CreATE TOKEN] 不明なゾーン', zone,ev);
+            break;
+          }
+          //console.log('[DBG] CREATE token', { uid, spawnZone }); //tmp
+          // すでに同じ uid のカードが場にあるなら何もしない（多重適用防止）
+          if (!arr.some(c => c.uid === uid)) {
+
+           // console.log('[DBG] before insert', zone, arr?.length); //tmp
+            // スナップショットからトークンオブジェクトを再構築
+            const card = {
+              uid: uid,
+              cardNo: snap.cardNo,
+              name: snap.name,
+              faceUp: !!snap.faceUp,
+              rot: snap.rot | 0,
+              counters: { ...(snap.counters || { p1p1:0, plus1:0 }) },
+              zone: zone,
+              isToken: (snap.cardNo === 'TOKEN'),
+            };
+            // UID_MAP にも登録（createCardInstance と同じ役割）
+            UID_MAP.set(card.uid, card);
+
+            // 可能なら元の index 付近に挿入。なければ末尾。
+            let idx = (typeof snap.index === 'number' && snap.index >= 0) ? snap.index : arr.length;
+            if (idx > arr.length) idx = arr.length;
+            arr.splice(idx, 0, card);
+           // console.log('[DBG] INSERT TOKEN', { zone, idx, uid}); //tmp
+          } else {
+            console.log('[DBG] CREATE: すでにゾーン内にuidが存在', { zone, uid});
+          }
+          renderAll();
         }
         break;
       case Action.DESTROY:
@@ -1584,18 +1621,18 @@ function orderByUID(arr, uidOrder){
 }
 
 // --------- 既存関数をラップ（通常操作 → 履歴に積む） ---------
-(function(){
-  // move
+(function(){ // move
   const _move = moveCardTo;
+
   function wrappedMoveCardTo(uid, newZone){
     const cardBefore = findCard(uid);
     const beforeSnap = snapshotCard(cardBefore);
     const isTok      = cardBefore && isToken(cardBefore);
-
+    const fromZone   = beforeSnap?.zone;
     const res = _move(uid, newZone);
 
     const cardAfter = findCard(uid);
-    const afterSnap  = snapshotCard(cardAfter);
+    const afterSnap = snapshotCard(cardAfter);
 
     if(__SILENT) return res;
 
@@ -1609,9 +1646,9 @@ function orderByUID(arr, uidOrder){
         prev: beforeSnap,
         next: null,
         meta: {
-          from: beforeSnap?.zone,
+          from: fromZone,
           to:   newZone,
-          via:  (__CTX || 'user'),
+          spawnZone: fromZone, 
         },
       };
       recordAndPush(ev);
@@ -1665,7 +1702,7 @@ function orderByUID(arr, uidOrder){
     const c = _createToken();
     if(__SILENT) return c;
     const snap = snapshotCard(c);
-    const ev = { id: ++OP_ID, type: Action.CREATE, ts: Date.now(), card: snap, next: snap };
+    const ev = { id: ++OP_ID, type: Action.CREATE, ts: Date.now(), card: snap, prev: null, next: snap, meta: { spawnZone: snap.zone || 'FREE', origin: 'btnToken',}, };
     recordAndPush(ev);
     return c;
   }
@@ -1785,7 +1822,7 @@ function orderByUID(arr, uidOrder){
       inv.card?.uid) {
     last.card = { ...inv.card };   // prev も揃えたければ last.prev も上書き
     if (last.prev) last.prev = { ...inv.card };
-  }
+  } 
     HISTORY.future.push(last);
     updateUndoRedoButtons();
     // Undo操作自体を“記録”には残す

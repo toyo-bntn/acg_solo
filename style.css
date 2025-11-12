@@ -8,10 +8,10 @@
   --col-center-min: 440px;
   --col-right: 260px;
 
-  /* 左ペイン3行の高さ（上:FREE / 中:プレビュー / 下:ログ）*/
+  /* 左ペイン3行の高さ（上:ログ / 中:FREE / 下:プレビュー）*/
+  --left-log-row: 150px;
   --left-free-row: auto;
   --left-preview-row: 450px;  /* ←お好みで 420〜520 あたり */
-  --left-log-row: 150px;
   --preview-big-height: 100px; /* プレビュー画像の高さ据え置き */
 
   /* main（中央4行）の高さを変数化 */
@@ -64,11 +64,15 @@
   .hint.bad{ color: var(--danger, #c33); }
 /* 左ペインの行配分 */
 .leftpane{
-  grid-column:1 / span 1; padding:4px;
+  grid-column:1 / span 1; 
+  padding:4px;
   display:grid !important;
 /*   grid-template-rows: minmax(132px, var(--left-free-row, auto)) var(--left-preview-row, 440px) var(--left-log-row, 200px);
 */
-  grid-template-rows: minmax(132px, var(--left-free-row, auto)) var(--left-preview-row, 200px) var(--left-log-row, 200px);
+  grid-template-rows: 
+  var(--left-log-row, 200px)
+  minmax(132px, var(--left-free-row, auto)) 
+  var(--left-preview-row, 200px) ;
   gap:4px;
 }
   /* ===== 3 ゾーンの高さをグリッド行に任せる ===== */
@@ -538,3 +542,14 @@
 /*=======================================================
  === Replay Ghost Animation (ghost move across zones) === 
  ======================================================== */
+.card-ghost {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  margin: 0;
+  /* 実カードと同じサイズで表示したい場合、width/height をカードと同じに */
+  width: var(--card-w);
+  height: var(--card-h);
+  transform-origin: top left;
+  transition: transform 200ms var(--fx-ease);
+}
