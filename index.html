@@ -57,14 +57,14 @@
       <span class="chip">seed: <span id="seedView">-</span></span>
       <button class="btn" id="btnReloadDeck">デッキ選択</button>   
       <button class="btn" id="btnInit7">初手</button>
-      <button class="btn" id="btnReset7">!!盤面リセット!!</button>
+      <button class="btn" id="btnReset">!!盤面リセット!!</button>
       <button class="btn" id="btnSide">サイド表示</button> 
       <span id="initReturn" class="pill bad hidden">マリガン（残: <span id="initReturnLeft">2</span>）</span>
     </div>
     <div class="right">
       <button class="btn" id="btnExport">盤面保存</button>
       <button class="btn" id="btnImport">盤面読込</button>
-      <button class="btn" id="btnReplay">再生 ▶</button>
+      <button class="btn" id="btnReplay"></button>
       <button class="btn" id="btnShot">盤面スクショ</button>
 
       <span class="chip" id="deckCountChip">基礎デッキ: 0</span> 
@@ -73,38 +73,7 @@
       <button class="chip" id="btnDraw1">1ドロー (D)</button>
     </div>
 </header>
-<div id="replayPanel" class="replayPanel hidden">
-  <div class="row" style="justify-content:space-between;align-items:center" >
-    <strong>リプレイ</strong>
-    <div>
-      <input type="file" id="replayFile" accept=".json" class="hidden">
-      <button class="btn sm" id="btnReplayOpen">ログ読込</button>
-      <button class="btn sm" id="btnReplayClose">閉じる</button>
-    </div>
-  </div>
 
-  <!-- シークバー（中央に丸ポチ●付） -->
-  <div class="replaySeekWrap">
-    <input type="range" id="replaySeek" min="0" max="0" value="0" step="1" />
-  </div>
-
-  <!-- カウントと倍速 -->
-  <div class="row" style="justify-content:space-between;align-items:center">
-    <div class="hint" id="replayStatus">0/0</div>
-    <div class="rateGroup">
-      <button class="btn sm rate" data-rate="1">x1</button>
-      <button class="btn sm rate" data-rate="1.5">x1.5</button>
-      <button class="btn sm rate" data-rate="2">x2</button>
-    </div>
-  </div>
-
-  <!-- コントロール（|◀ ▷ ▶|） -->
-  <div class="controls">
-    <button class="btn sm" id="btnStepPrev">|◀</button>
-    <button class="btn sm" id="btnPlayToggle">▷</button>
-    <button class="btn sm" id="btnStepNext">▶|</button>
-  </div>
-</div>
 <!-- === サイドデッキ オーバーレイ === -->
 <div id="sidePanel" class="replayPanel hidden sidePanel">
     <section class="zone" data-zone="SIDEDECK">
@@ -129,12 +98,31 @@
   <section class="zone" id="zone-log">
     <h3>操作ログ 
     <span class="toolbar">
-      <button class="btn sm" id="btnUndo" disabled>元に戻す</button>
-      <button class="btn sm" id="btnRedo" disabled>やり直す</button>
-      <button class="btn sm" id="btnRecord">記録開始</button>
+      <button class="btn sm" id="btnUndo" disabled>戻る</button>
+      <button class="btn sm" id="btnRedo" disabled>進む</button>
+      <button class="btn" id="btnRecToggle" data-state="stopped">●REC</button>
     </span>
     </h3>
-    <div class="log" id="logBox"></div>
+    <div class="history-bar">
+      <!-- スライダー本体 -->
+      <input
+        type="range"
+        id="historySlider"
+        min="0"
+        max="0"
+        value="0"
+        step="1">
+        <!-- カウントと倍速 -->
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div class="hint" id="replayStatus">0/0</div>
+          <div class="rateGroup">
+            <button class="btn sm rate" data-rate="1">x1</button>
+            <button class="btn sm rate" data-rate="2">x2</button>
+            <button class="btn sm" id="btnPlayToggle" data-state="stopped" aria-label="再生">再生▷</button>
+          </div>
+        </div>
+    </div>
+      <!-- ログ: <div class="log" id="logBox"></div>-->
   </section>
   
   <section class="zone" id="zone-free">

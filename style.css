@@ -9,7 +9,7 @@
   --col-right: 260px;
 
   /* 左ペイン3行の高さ（上:ログ / 中:FREE / 下:プレビュー）*/
-  --left-log-row: 150px;
+  --left-log-row: 90px;
   --left-free-row: auto;
   --left-preview-row: 450px;  /* ←お好みで 420〜520 あたり */
   --preview-big-height: 100px; /* プレビュー画像の高さ据え置き */
@@ -67,13 +67,11 @@
   grid-column:1 / span 1; 
   padding:4px;
   display:grid !important;
-/*   grid-template-rows: minmax(132px, var(--left-free-row, auto)) var(--left-preview-row, 440px) var(--left-log-row, 200px);
-*/
   grid-template-rows: 
-  var(--left-log-row, 200px)
+  var(--left-log-row, 130px)
   minmax(132px, var(--left-free-row, auto)) 
   var(--left-preview-row, 200px) ;
-  gap:4px;
+  gap: 4px !important;
 }
   /* ===== 3 ゾーンの高さをグリッド行に任せる ===== */
   #zone-preview .preview{
@@ -108,7 +106,7 @@
 #zone-preview .info .abilityList{ margin:4px 0 0 0; padding-left:18px; font-size:16px }
 
 /* ★ スクロールバーを非表示（縦横とも隠す）*/
-#logBox,
+/*#logBox, */
 #zone-preview,
 #zone-preview .big,
 #zone-preview .info{
@@ -151,7 +149,7 @@
     width:var(--card-w) !important; height:var(--card-h) !important; 
   }
   aside{grid-column:3 / span 1; padding:4px; display:grid; grid-template-rows: 1fr 1fr; gap:4px;}
-  .zone{background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:4px; display:flex; flex-direction:column; gap:2px; min-height:100px; overflow-x: auto;}
+  .zone{background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:4px; display:flex; flex-direction:column; gap:2px; min-height:90px; overflow-x: auto;}
   .zone h3{margin:0; font-size:14px; color:var(--muted); display:flex; align-items:center; gap:2px; justify-content:space-between; padding: 0 0 0 6px }
   .toolbar{display:flex; gap:4px; align-items:center; flex-wrap:wrap}
   .content{flex:1; overflow:auto; padding:4px; border-radius:8px; border:1px dashed var(--border);}
@@ -552,4 +550,52 @@
   height: var(--card-h);
   transform-origin: top left;
   transition: transform 200ms var(--fx-ease);
+}
+
+#zone-log .history-bar{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+#historySlider{ width:100%;}
+
+/* 余裕があればカスタム風に */
+#historySlider{
+  -webkit-appearance:none;
+  height:6px;
+  border-radius:999px;
+  background:#1e273a;
+}
+#historySlider::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  background:#0044ff;
+  cursor:pointer;
+}
+/* ========== 再生中ロック ========== */
+body.replaying { cursor: not-allowed; }
+
+/* 原則すべての操作を無効化（クリック不可） */
+body.replaying button,
+body.replaying input,
+body.replaying select,
+body.replaying a,
+body.replaying .zone,
+body.replaying .card {
+  pointer-events: none !important;
+}
+
+/* ただし「再生/停止」と「倍速」だけは許可 */
+body.replaying #btnPlayToggle,
+body.replaying .rateGroup .btn {
+  pointer-events: auto !important;
+}
+
+/* 視覚面（無効っぽく見せる・任意） */
+.btn[disabled], input[disabled], select[disabled],
+a[aria-disabled="true"] {
+  opacity: .5;
+  cursor: not-allowed;
 }

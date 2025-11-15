@@ -15,18 +15,105 @@ const $$ = sel => Array.from(document.querySelectorAll(sel));
 const logBox = $('#logBox');
 // const bind = (sel, type, handler) => document.querySelector(sel)?.addEventListener(type, handler);
 let SIDEDECK_TARGET = 0;
+// ===== クリップ再生用の状態 =====
+let REPLAY_TIMER = null;
+let REPLAY_RATE  = 1;              // 1 / 2
+const BASE_INTERVAL = 900;         // 1ステップの基準ms（MOVEの700msに少し余裕）
+
+function isReplayPlaying(){ return !!REPLAY_TIMER; }
+// 許可する要素（この中だけは再生中でも操作可）
+const ALLOW_DURING_PLAY = '#btnPlayToggle, .rateGroup .btn';
+/** 再生中ロック ON */
+function enterReplayLock(){
+  document.body.classList.add('replaying');
+
+  // 見た目も「押せなさそう」にする（disabled 付与）
+  document.querySelectorAll('button, input, select, a').forEach(el=>{
+    if (el.matches('#btnPlayToggle') || el.closest('.rateGroup')) return;
+    // 現在の disabled を記憶（解除時に復元）
+    if (!el.hasAttribute('data-prev-disabled')){
+      el.setAttribute('data-prev-disabled', el.disabled ? '1' : '0');
+    }
+    el.disabled = true;
+  });
+}
+
+/** 再生中ロック OFF */
+function leaveReplayLock(){
+  document.body.classList.remove('replaying');
+
+  // disabled を元状態に戻す
+  document.querySelectorAll('[data-prev-disabled]').forEach(el=>{
+    const prev = el.getAttribute('data-prev-disabled') === '1';
+    el.disabled = prev;
+    el.removeAttribute('data-prev-disabled');
+  });
+}
+function isAllowedTarget(t){
+  return !!(t && t.closest && t.closest(ALLOW_DURING_PLAY));
+}
+
+// クリック/キー/ドラッグ等を早期に握りつぶす
+['click','mousedown','mouseup','pointerdown','pointerup','contextmenu',
+ 'dragstart','drop','keydown','wheel','touchstart','touchmove'].forEach(type=>{
+  document.addEventListener(type, (e)=>{
+    if (!isReplayPlaying()) return;
+    if (isAllowedTarget(e.target)) return;       // 再生トグル/倍速だけ通す
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true); // ← capture で最前段に介入
+});
+
+// ===== スナップショット全体 =====
+function takeFullSnapshot(){
+  // ゲーム全体の完全スナップショット（ZONES, UID_MAP由来）
+  const zones = {};
+  for (const k of Object.keys(ZONES)){
+    zones[k] = ZONES[k].map(c=>({
+      uid: c.uid, cardNo: c.cardNo, name: c.name,
+      faceUp: !!c.faceUp, rot: c.rot|0,
+      counters: { ...(c.counters||{}) },
+      zone: c.zone, isToken: !!c.isToken
+    }));
+  }
+  return { zones };
+}
+
+function restoreFullSnapshot(snap){
+  // 既存DOMを一気に置き換える前提でZONES/UID_MAPを再構築
+  for (const k of Object.keys(ZONES)) ZONES[k].length = 0;
+  UID_MAP.clear();
+
+  for (const [zone, arr] of Object.entries(snap.zones||{})){
+    for (const s of arr){
+      const card = { ...s };
+      UID_MAP.set(card.uid, card);
+      ZONES[zone].push(card);
+    }
+  }
+  renderAll();
+}
 
 function updateHistoryBar(){
   const slider = document.getElementById('historySlider');
   const label  = document.getElementById('historyLabel');
+  const status = document.getElementById('replayStatus');
   if(!slider || !label) return;
 
   const total   = HISTORY.past.length + HISTORY.future.length;
   const current = HISTORY.past.length;  // ←ここが「今どこまで適用済みか」
 
-  slider.max   = String(total);
-  slider.value = String(current);
-  label.textContent = `${current} / ${total}`;
+  if (slider){
+    slider.max   = String(total);
+    slider.value = String(current);
+    slider.disabled = total === 0;
+  }
+  if (label){
+    label.textContent = `${current} / ${total}`;
+  }
+  if (status){
+    status.textContent = `${current} / ${total}`;
+  }
 }
 function jumpToHistoryIndex(target){
   target = Math.max(0, Math.floor(target));
@@ -726,8 +813,7 @@ function renderZonesEl(...zones){
   }
 }
 
-function zoneToEl(z){
-    // ゾーン名 → コンテナ要素 への解決（既存の選び方に合わせて）
+function zoneToEl(z){ // ゾーン名 → コンテナ要素 への解決（既存の選び方に合わせて）
     switch(z){
       case 'FREE':        return $('#zone-free .content');
       case 'BATTLEFIELD': return $('#battlefield');
@@ -740,8 +826,7 @@ function zoneToEl(z){
       case 'SIDEDECK':    return $('#sideDeck');
       default:            return null;
     }
-  }
-
+}
 
 // 選択・操作
 function findCard(uid){ return UID_MAP.get(uid) || null; }
@@ -1211,17 +1296,8 @@ $('#btnDrawFromDeck').onclick = ()=> drawFromMain();
 $('#btnShuffleTerr').onclick = ()=>{ shuffle(ZONES.T_DECK); renderAll(); log('領土デッキをシャッフル'); };
 $('#btnDrawFromTDeck').onclick = ()=> drawFromTDeck();
 $('#btnDraw1').onclick = ()=> drawFromMain();
-$('#btnInit7').onclick = ()=>{
-  __SILENT = true;
-  try{
-    initDraw7();        // 中では drawFromMain() を呼ぶが、ここでは記録しない
-  } finally {
-    __SILENT = false;
-  }
-  clearHistory();       // HISTORY.past / future を空にする
-  log('初手を引き直しました（履歴をリセット）');
-};
-$('#btnReset7').onclick = ()=>{
+$('#btnInit7').onclick = ()=> initDraw7();
+$('#btnReset').onclick = ()=>{
   __SILENT = true;
   try{
     resetBoard();       // 盤面を初期状態に戻す
@@ -1457,6 +1533,7 @@ function clearHistory(){
   OP_ID = 0;
   updateUndoRedoButtons();
   updateHistoryBar();
+  resetClipUI(); 
 }
 function dumpHistory(){
   console.log('--- HISTORY.past ---');
@@ -1538,44 +1615,140 @@ function updateUndoRedoButtons(){
   if(u) u.disabled = HISTORY.past.length===0;
   if(r) r.disabled = HISTORY.future.length===0;
 }
-function logEventForExport(ev){
-  if(!RECORDING || !SESSION) return;
-  SESSION.events.push(ev);
-  appendEventLogView(ev);
+function resetClipUI(){
+  const sld = document.getElementById('clipSlider');
+  const st  = document.getElementById('clipStatus');
+  if(sld){ sld.min='0'; sld.max='0'; sld.value='0'; sld.disabled = true; }
+  if(st){  st.textContent = '0/0'; }
 }
+// RECORDING, SESSION
 function beginRecording(){
-  if(RECORDING) return;
+  if (RECORDING) return;
   RECORDING = true;
-  SESSION = { startedAt: nowISO(), startIndex: HISTORY.past.length, events: [] };
-  const b = document.getElementById('btnRecord');
-  if(b){ b.textContent='記録停止'; b.classList.add('recording'); }
-  log('記録を開始');
+  SESSION = {
+    startedAt: nowISO(),
+    baseSnap:  takeFullSnapshot(),  // ★ クリップの基準
+    events:    [],
+    cursor:    0
+  };
+  resetClipUI();
+
 }
+
 function endRecording(){
   if(!RECORDING) return;
-  const b = document.getElementById('btnRecord');
-  if(b){ b.textContent='記録開始'; b.classList.remove('recording'); }
   RECORDING = false;
-  const evs = (SESSION?.events||[]);
-  const ts = new Date();
-  const filename = `acg_log_${ts.getFullYear()}${pad2(ts.getMonth()+1)}${pad2(ts.getDate())}_${pad2(ts.getHours())}${pad2(ts.getMinutes())}${pad2(ts.getSeconds())}.json`;
-  const payload = {
-    type:'acg-log', version:1,
-    startedAt: SESSION?.startedAt, endedAt: nowISO(),
-    seed: SEED,
-    events: evs
-  };
-  saveJson(filename, payload);
-  log(`記録を保存: ${filename}`);
-  SESSION = null;
+  const n   = SESSION?.events?.length || 0;
+  const sld = document.getElementById('clipSlider');
+  const st  = document.getElementById('clipStatus');
+  if(sld){ sld.disabled = (n===0); sld.min='0'; sld.max=String(n); sld.value='0'; }
+  if(st){  st.textContent = `0/${n}`; }
+  SESSION.cursor = 0;
 }
+// Record/Stop のクリック切り替え
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('#btnRecToggle');
+  if (!btn) return;
+   console.log('[rec-click]', btn.id);
+  e.preventDefault();
+  
+  const rec = btn.dataset.state === 'recording';
+  if(!rec){
+    beginRecording();             // 開始
+    btn.dataset.state = 'recording';
+    btn.textContent   = 'STOP';
+  }else{
+    endRecording();               // 停止
+    btn.dataset.state = 'stopped';
+    btn.textContent   = '●REC';
+  }
+});
+
 function recordAndPush(ev){
-  HISTORY.past.push(ev);            // 通常操作は Undo 対象
-  HISTORY.future.length = 0;        // Redo 破棄
+  HISTORY.past.push(ev);
+  HISTORY.future.length = 0;
   updateUndoRedoButtons();
-  logEventForExport(ev);            // 録画中のみJSON/表示へ
   updateHistoryBar();
+
+  // ★ 録画中はクリップにも積む（EFFECTは除外推奨）
+  if(RECORDING && SESSION ){
+    SESSION.events.push(ev);
+
+    const sld = document.getElementById('clipSlider');
+    const st  = document.getElementById('clipStatus');
+    if(sld){ sld.max = String(SESSION.events.length); sld.disabled = false; }
+    if(st){  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`; }
+  }
 }
+function clipJumpTo(target){
+  if (!SESSION) return;
+  target = Math.max(0, Math.min(target|0, SESSION.events.length));
+
+  restoreFullSnapshot(SESSION.baseSnap);// 基準へ巻き戻し
+
+  // 先頭から target 件 適用（サイレント適用・履歴を汚さない）
+  __SILENT = true;
+  try{
+    for (let i=0; i<target; i++){
+      apply(SESSION.events[i], { animate:false }); // 連続ジャンプはアニメOFF推奨
+    }
+  } finally { __SILENT = false; }
+
+  SESSION.cursor = target;
+  const sld = document.getElementById('clipSlider');
+  const st  = document.getElementById('clipStatus');
+  if(sld) sld.value = String(target);
+  if(st)  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`;
+}
+function clipStepForward({ animate=true }={}){
+  if (!SESSION) return false;
+  if (SESSION.cursor >= SESSION.events.length) return false;
+
+  const ev = SESSION.events[SESSION.cursor];
+  __SILENT = true;
+  try{ apply(ev, { animate }); 
+  } finally { __SILENT = false; }
+  SESSION.cursor++;
+
+  const sld = document.getElementById('clipSlider');
+  const st  = document.getElementById('clipStatus');
+  if(sld) sld.value = String(SESSION.cursor);
+  if(st)  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`;
+  return true;
+}
+
+function clipStepBackward(){
+  if (!SESSION) return false;
+  if (SESSION.cursor <= 0) return false;
+
+  // シンプルに「1つ前へジャンプ」：基準に戻して cursor-1 件再適用
+  clipJumpTo(SESSION.cursor - 1);
+  return true;
+}
+// シークバー（change で十分。ドラッグ中も追従させたいなら input でもOK）
+const clipSlider = document.getElementById('historySlider');
+if (clipSlider){
+  clipSlider.addEventListener('change', (e)=>{
+    clipJumpTo(Number(e.target.value||0));
+  });
+}
+
+// |◀ / ▷ / ▶|
+const bPlay = document.getElementById('btnPlayToggle');
+
+bPlay && (bPlay.onclick = ()=>{
+  if (REPLAY_TIMER) stopReplay();
+  else              startReplay();
+});
+
+// 倍速
+function setReplayRate(rate){
+  REPLAY_RATE = rate;
+  document.querySelectorAll('.rateGroup .rate')
+    .forEach(b=> b.classList.toggle('active', parseFloat(b.dataset.rate||'1')===rate));
+  if(REPLAY_TIMER){ stopReplay(); startReplay(); }
+}
+
 function invert(ev){
   const baseMeta = { ...(ev.meta || {}) };
   const base = { ts: Date.now(), card: ev.card, meta: { ...(ev.meta||{}) } };
@@ -1834,6 +2007,16 @@ function orderByUID(arr, uidOrder){
   }
   drawFromTDeck = wrappedDrawFromDeck;
   window.drawFromDeck = wrappedDrawFromDeck;
+  // init draw 7
+  const _initdraw7 = initDraw7;
+  function wrappedInitDraw7(){ 
+    __CTX='draw:init7'; 
+    const r=_initdraw7(); 
+    __CTX=null; 
+    return r; 
+  }
+  initDraw7 = wrappedInitDraw7;
+  window.initDraw7 = wrappedInitDraw7;
   // カウンター調整：showCtrMenu 経由の操作をフック（差分検出）
   const _showCtrMenu = showCtrMenu;
   let __ctrCtx = null; // {uid, typ, before}
@@ -1897,51 +2080,69 @@ function orderByUID(arr, uidOrder){
   }
 })();
 
+// 1ステップ「戻る」（Undo相当）
+function stepBackward(opts = { animate:true, logUndo:true }){
+  const last = HISTORY.past.pop();
+  if(!last){
+    return false;
+  }
+  const inv = invert(last);
+  HISTORY.future.push(last);
+  apply(inv, { animate: !!opts.animate });
+  updateUndoRedoButtons();
+  updateHistoryBar();
+
+  // Action.UNDO のログを残すかどうか（自動再生のときは要らない）
+  if (opts.logUndo && RECORDING && SESSION){
+    const logEv = {
+      id:   ++OP_ID,
+      type: Action.UNDO,
+      ts:   Date.now(),
+      meta: { targetId: last.id }
+    };
+    appendEventLogView(logEv);
+    SESSION.events.push(logEv);
+  }
+  return true;
+}
+
+// 1ステップ「進む」（Redo相当）
+function stepForward(opts = { animate:true, logRedo:true }){
+  const next = HISTORY.future.pop();
+  if(!next){
+    return false;
+  }
+  HISTORY.past.push(next);
+  apply(next, { animate: !!opts.animate });
+  updateUndoRedoButtons();
+  updateHistoryBar();
+
+  if (opts.logRedo && RECORDING && SESSION){
+    const logEv = {
+      id:   ++OP_ID,
+      type: Action.REDO,
+      ts:   Date.now(),
+      meta: { targetId: next.id }
+    };
+    appendEventLogView(logEv);
+    SESSION.events.push(logEv);
+  }
+  return true;
+}
+
 // --------- Undo / Redo UI & ショートカット ---------
 (function(){
   const btnUndo = document.getElementById('btnUndo');
   const btnRedo = document.getElementById('btnRedo');
-  const btnRec  = document.getElementById('btnRecord');
+  const btnRec  = document.getElementById('btnRecToggle');
   btnUndo && (btnUndo.onclick = ()=>{
-    const last = HISTORY.past.pop();
-    if(!last) return;
-    const inv = invert(last);
-    apply(inv, { animate: true });
-
-  // ★ トークン消滅を Undo した場合、
-  //    DESTROY 側の ev.card も “新しく生成されたトークン” の uid で上書きする
-  if (last.type === Action.DESTROY &&
-      inv.type  === Action.CREATE &&
-      inv.card?.cardNo === 'TOKEN' &&
-      inv.card?.uid) {
-    last.card = { ...inv.card };   // prev も揃えたければ last.prev も上書き
-    if (last.prev) last.prev = { ...inv.card };
-  } 
-    HISTORY.future.push(last);
-    updateUndoRedoButtons();
-    updateHistoryBar();
-    // Undo操作自体を“記録”には残す
-    if(RECORDING && SESSION){ 
-      const logEv = { 
-        id: ++OP_ID, 
-        type: Action.UNDO, 
-        ts: Date.now(), 
-        meta:{ targetId: last.id } 
-      };
-      appendEventLogView(logEv); 
-      SESSION.events.push(logEv); 
-    }
+    stepBackward({ animate:true, logUndo:true });
   });
+
   btnRedo && (btnRedo.onclick = ()=>{
-    const next = HISTORY.future.pop();
-    if(!next) return;
-
-    HISTORY.past.push(next);
-    apply(next, { animate: true });
-    updateUndoRedoButtons();
-    updateHistoryBar();
-    if(RECORDING && SESSION){ appendEventLogView({ id: ++OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); SESSION.events.push({ id: OP_ID, type: Action.REDO, ts: Date.now(), meta:{ targetId: next.id } }); }
+    stepForward({ animate:true, logRedo:true });
   });
+
   btnRec  && (btnRec.onclick  = ()=> RECORDING ? endRecording() : beginRecording());
 
   // Ctrl/Cmd+Z（Undo）、Ctrl+Y or Shift+Ctrl/Cmd+Z（Redo）
@@ -1956,6 +2157,94 @@ function orderByUID(arr, uidOrder){
   });
   updateUndoRedoButtons();
 })();
+
+// 初期化
+document.querySelectorAll('.rateGroup .rate').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const rate = parseFloat(btn.dataset.rate || '1');
+    setReplayRate(rate);
+  });
+});
+// デフォルトで x1 をアクティブに
+setReplayRate(1);
+
+function startReplay(){
+  // SESSION が無い or クリップ0件なら開始しない
+  if (!SESSION || (SESSION.events?.length||0) === 0) {
+    console.warn('[replay] no session or empty events');
+    return;
+  }
+  if (REPLAY_TIMER) return;
+  clipJumpTo(0);
+
+  setPlayButtonState('playing');
+  enterReplayLock();
+  const interval = Math.max(120, BASE_INTERVAL / REPLAY_RATE);
+  REPLAY_TIMER = setInterval(()=>{
+    const ok = clipStepForward?.({ animate:true }) 
+    if (!ok) stopReplay();                                   // 末尾で自動停止
+  }, interval);
+}
+function stopReplay(){
+  if(!REPLAY_TIMER) return;
+  clearInterval(REPLAY_TIMER);
+  REPLAY_TIMER = null;
+  leaveReplayLock();
+  setPlayButtonState('stopped');
+}
+function setPlayButtonState(state){ // 'playing' | 'stopped'
+  const btn = document.getElementById('btnPlayToggle');
+  if (!btn) return;
+  btn.dataset.state = state;
+  const playing = state === 'playing';
+  btn.textContent = playing ? '▮▮' : '再生 ▷';           // 文字でトグル
+  btn.setAttribute('aria-label', playing ? '停止' : '再生');
+  btn.classList.toggle('is-playing', playing);       // 任意のスタイル用
+}
+// クリックでトグル（IDは固定のまま data-state で判定）
+document.getElementById('btnPlayToggle')?.addEventListener('click', ()=>{
+  const btn = document.getElementById('btnPlayToggle');
+  const playing = btn?.dataset.state === 'playing';
+  playing ? stopReplay() : startReplay();
+});
+
+// 初期化（念のため）
+document.addEventListener('DOMContentLoaded', ()=>{
+  const btn = document.getElementById('btnPlayToggle');
+  if (btn) {
+    setPlayButtonState(btn.dataset.state === 'playing' ? 'playing' : 'stopped');
+    btn.addEventListener('click', ()=>{
+      (btn.dataset.state === 'playing') ? stopReplay() : startReplay();
+    });
+  }
+
+  // 倍速ボタン
+  document.querySelectorAll('.rateGroup .rate').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      REPLAY_RATE = parseFloat(b.dataset.rate||'1');
+      document.querySelectorAll('.rateGroup .rate')
+        .forEach(x=> x.classList.toggle('active', x===b));
+      if (REPLAY_TIMER){ stopReplay(); startReplay(); }
+    });
+  });
+});
+// UI接続
+document.getElementById('clipSlider')?.addEventListener('change', e=>{
+  stopReplay();
+  clipJumpTo(Number(e.target.value||0));
+});
+document.getElementById('clipPrev')?.addEventListener('click', ()=>{
+  stopReplay(); clipStepBackward();
+});
+document.getElementById('clipNext')?.addEventListener('click', ()=>{
+  stopReplay(); clipStepForward({ animate:true });
+});
+document.getElementById('clipPlay')?.addEventListener('click', ()=>{
+  REPLAY_TIMER ? stopReplay() : startReplay();
+});
+document.querySelectorAll('.rateGroup .rate')
+  .forEach(b=> b.addEventListener('click', ()=> setReplayRate(parseFloat(b.dataset.rate||'1'))));
+setReplayRate(1);
 
 /**
  * 選択中カードを左右の隣と入れ替える（横並びゾーンのみ）
@@ -1996,6 +2285,7 @@ function swapSelectedWithNeighbor(dir){
 }
 //キーボードショートカット
 document.addEventListener('keydown', (e)=>{
+  if (isReplayPlaying()) return; // ← 再生中は何もしない
   // 入力要素内では無効
   const tag = (e.target && e.target.tagName) || '';
   if(tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
