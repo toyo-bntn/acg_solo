@@ -23,7 +23,7 @@
   --t-deck-width: 40%;         /* ← 領土デッキを細くしたいなら30〜40% */
   --card-w: 80px;                         /* ← ここを 84px, 80px などに */
   --card-h: calc(var(--card-w) * 1.4348); /* 92:132 の比率 ≒ 1.4348 */
-  --card-radius: 8px;
+  --card-radius: 2px;
   --card-border: 0px solid transparent;
   --card-shadow: none;
   --side-panel-width: 720px;
@@ -357,13 +357,13 @@
 .pileCols .card{
   position: absolute;      /* JSでleft/top/z-indexを与える */
 }
-.replayPanel{
+.Panel{
   position:fixed; width:250px;
   background:var(--panel); border:1px solid var(--border); border-radius:12px;
   padding:5px; z-index:9999; box-shadow:0 12px 30px rgba(0,0,0,.35);
 }
-.replayPanel.hidden{ display:none }
-.replayPanel .row{ display:flex; gap:6px; flex-wrap:wrap; }
+.Panel.hidden{ display:none }
+.Panel .row{ display:flex; gap:6px; flex-wrap:wrap; }
 #replaySeek{ width:100% }
 /* 録画中（ボタン）を赤く・軽く点滅 */
 #btnRecord.recording{

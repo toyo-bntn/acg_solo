@@ -20,141 +20,6 @@ let REPLAY_TIMER = null;
 let REPLAY_RATE  = 1;              // 1 / 2
 const BASE_INTERVAL = 900;         // 1ステップの基準ms（MOVEの700msに少し余裕）
 
-function isReplayPlaying(){ return !!REPLAY_TIMER; }
-// 許可する要素（この中だけは再生中でも操作可）
-const ALLOW_DURING_PLAY = '#btnPlayToggle, .rateGroup .btn';
-/** 再生中ロック ON */
-function enterReplayLock(){
-  document.body.classList.add('replaying');
-
-  // 見た目も「押せなさそう」にする（disabled 付与）
-  document.querySelectorAll('button, input, select, a').forEach(el=>{
-    if (el.matches('#btnPlayToggle') || el.closest('.rateGroup')) return;
-    // 現在の disabled を記憶（解除時に復元）
-    if (!el.hasAttribute('data-prev-disabled')){
-      el.setAttribute('data-prev-disabled', el.disabled ? '1' : '0');
-    }
-    el.disabled = true;
-  });
-}
-
-/** 再生中ロック OFF */
-function leaveReplayLock(){
-  document.body.classList.remove('replaying');
-
-  // disabled を元状態に戻す
-  document.querySelectorAll('[data-prev-disabled]').forEach(el=>{
-    const prev = el.getAttribute('data-prev-disabled') === '1';
-    el.disabled = prev;
-    el.removeAttribute('data-prev-disabled');
-  });
-}
-function isAllowedTarget(t){
-  return !!(t && t.closest && t.closest(ALLOW_DURING_PLAY));
-}
-
-// クリック/キー/ドラッグ等を早期に握りつぶす
-['click','mousedown','mouseup','pointerdown','pointerup','contextmenu',
- 'dragstart','drop','keydown','wheel','touchstart','touchmove'].forEach(type=>{
-  document.addEventListener(type, (e)=>{
-    if (!isReplayPlaying()) return;
-    if (isAllowedTarget(e.target)) return;       // 再生トグル/倍速だけ通す
-    e.stopImmediatePropagation();
-    e.preventDefault();
-  }, true); // ← capture で最前段に介入
-});
-
-// ===== スナップショット全体 =====
-function takeFullSnapshot(){
-  // ゲーム全体の完全スナップショット（ZONES, UID_MAP由来）
-  const zones = {};
-  for (const k of Object.keys(ZONES)){
-    zones[k] = ZONES[k].map(c=>({
-      uid: c.uid, cardNo: c.cardNo, name: c.name,
-      faceUp: !!c.faceUp, rot: c.rot|0,
-      counters: { ...(c.counters||{}) },
-      zone: c.zone, isToken: !!c.isToken
-    }));
-  }
-  return { zones };
-}
-
-function restoreFullSnapshot(snap){
-  // 既存DOMを一気に置き換える前提でZONES/UID_MAPを再構築
-  for (const k of Object.keys(ZONES)) ZONES[k].length = 0;
-  UID_MAP.clear();
-
-  for (const [zone, arr] of Object.entries(snap.zones||{})){
-    for (const s of arr){
-      const card = { ...s };
-      UID_MAP.set(card.uid, card);
-      ZONES[zone].push(card);
-    }
-  }
-  renderAll();
-}
-
-function updateHistoryBar(){
-  const slider = document.getElementById('historySlider');
-  const label  = document.getElementById('historyLabel');
-  const status = document.getElementById('replayStatus');
-  if(!slider || !label) return;
-
-  const total   = HISTORY.past.length + HISTORY.future.length;
-  const current = HISTORY.past.length;  // ←ここが「今どこまで適用済みか」
-
-  if (slider){
-    slider.max   = String(total);
-    slider.value = String(current);
-    slider.disabled = total === 0;
-  }
-  if (label){
-    label.textContent = `${current} / ${total}`;
-  }
-  if (status){
-    status.textContent = `${current} / ${total}`;
-  }
-}
-function jumpToHistoryIndex(target){
-  target = Math.max(0, Math.floor(target));
-  const total   = HISTORY.past.length + HISTORY.future.length;
-  if(target > total) target = total;
-
-  let current = HISTORY.past.length;
-  let delta   = target - current;
-  if(delta === 0) return;
-
-  // 細かくアニメさせたくないので、ここでは animate:false を推奨
-  const animate = false;
-
-  if(delta > 0){
-    // 先に進める（Redo 相当）
-    while(delta-- > 0 && HISTORY.future.length > 0){
-      const ev = HISTORY.future.pop();
-      HISTORY.past.push(ev);
-      apply(ev, { animate });
-    }
-  } else {
-    // 巻き戻す（Undo 相当）
-    while(delta++ < 0 && HISTORY.past.length > 0){
-      const last = HISTORY.past.pop();
-      const inv  = invert(last);
-      HISTORY.future.push(last);
-      apply(inv, { animate });
-    }
-  }
-
-  updateUndoRedoButtons();
-  updateHistoryBar();
-}
-const slider = document.getElementById('historySlider');
-if(slider){
-  // ドラッグ中もリアルタイムに動かしたければ input
-  slider.addEventListener('change', (e)=>{
-    const target = Number(e.target.value || 0);
-    jumpToHistoryIndex(target);
-  });
-}
 function log(msg){
   const t = new Date();
   const hh = String(t.getHours()).padStart(2,'0');
@@ -173,10 +38,6 @@ function saveText(filename, text, mime){
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 }
-function saveJson(filename, obj){
-  saveText(filename, JSON.stringify(obj, null, 2), 'application/json');
-}
-
 function pad3(n){ return String(n).padStart(3,'0'); }
 function randomSeed(){ return Math.floor(Math.random()*1e9); }
 
@@ -198,6 +59,77 @@ const imageStore = {
 const btnPickImages   = document.getElementById("btnPickImages");
 const imagesDirInput  = document.getElementById("imagesDirInput");
 const imagesStatus    = document.getElementById("imagesStatus");
+
+// === 追加: ./images.zip を読み込んで imageStore に詰める ===
+const ZIP_URL = './images.zip';
+
+// 拡張子→MIME
+const _mimeByExt = (ext) => {
+  ext = ext.toLowerCase();
+  if (ext === 'png')  return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  return 'application/octet-stream';
+};
+
+// 既存の ObjectURL を掃除
+function _revokePickedImages(){
+  for (const url of imageStore.map.values()){
+    if (typeof url === 'string' && url.startsWith('blob:')){
+      URL.revokeObjectURL(url);
+    }
+  }
+  imageStore.map.clear();
+}
+
+/**
+ * images.zip を fetch→展開して imageStore.map に投入
+ * 例: zip 内の "ACG-001.png" → key "ACG-001" に ObjectURL をセット
+ * サブフォルダがあっても「最後のファイル名」をキーにします
+ */
+async function loadImagesZip(url = ZIP_URL){
+  try{
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return false; // zip が無ければ黙ってスキップ
+    const ab  = await res.arrayBuffer();
+
+    // JSZip を ESM で動的 import
+    const JSZip = (await import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm')).default;
+    const zip   = await JSZip.loadAsync(ab);
+
+    _revokePickedImages();
+
+    const entries = Object.values(zip.files);
+    for (const ent of entries){
+      if (ent.dir) continue;
+
+      // パス末尾の "名前.拡張子" を拾う
+      const m = ent.name.match(/([^/]+)\.(png|webp|jpe?g)$/i);
+      if (!m) continue;
+
+      const base = m[1];           // 例: "ACG-001" / "Back" / "token"
+      const ext  = m[2].toLowerCase();
+
+      const u8   = await ent.async('uint8array');
+      const blob = new Blob([u8], { type: _mimeByExt(ext) });
+      const url  = URL.createObjectURL(blob);
+
+      // 大文字小文字ゆらぎも吸収（既存 pickFromSelectedFolder が拾いやすいように）
+      imageStore.map.set(base, url);
+      imageStore.map.set(base.toLowerCase(), url);
+      imageStore.map.set(base.toUpperCase(), url);
+    }
+
+    imageStore.source  = 'zip';
+    imageStore.hasAny  = imageStore.map.size > 0;
+    updateImagesStatus();           // 読み込み済みならステータスを隠す
+    console.log(`[images.zip] loaded: ${imageStore.map.size} images`);
+    return imageStore.hasAny;
+  }catch(err){
+    console.warn('[images.zip] load failed', err);
+    return false;
+  }
+}
 
 // 画像の存在チェック（Image オブジェクトで軽量確認）
 function imageExists(url) {
@@ -232,6 +164,19 @@ function updateImagesStatus(ok) {
 }
 
 async function setCardImage(imgEl, baseName) {
+  // 0) zip/picker 由来を最優先
+   const picked0 = pickFromSelectedFolder(baseName);
+   if (picked0){
+     imgEl.crossOrigin = 'anonymous';
+     imgEl.src = picked0;
+     return;
+   }
+   // Back だけは最後にローカル既定へフォールバック
+   if (baseName === 'Back'){
+     imgEl.crossOrigin = 'anonymous';
+     imgEl.src = './images/Back.png';
+     return;
+   }
   if (baseName === 'Back'){
     imgEl.crossOrigin = 'anonymous';
     imgEl.src = './images/Back.png';
@@ -300,7 +245,6 @@ function wakeAllTerritory(){
     __CTX = null;
   }
 
-  log('領地のカードを起床');
   renderZone('T_FIELD', $('#territory'), {row:true});
 }
 $('#btnWakeTerritory')?.addEventListener('click', wakeAllTerritory);
@@ -374,7 +318,8 @@ let selectedUID = null;
 const DBLCLICK_MS = 190;
 
 // DOM 準備後に初期化（既存の起動処理にぶら下げてOK）
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+  await loadImagesZip('./images.zip');
   // 1) デフォルト ./images 存在確認
   probeDefaultImages();
 
@@ -454,7 +399,6 @@ function createToken(){
   const c = createCardInstance('TOKEN', 'FREE', true, {isToken:true, name:'トークン'});
   ZONES.FREE.push(c); 
   renderAll(); 
-  log('トークンを生成');
   return c;
 }
 
@@ -807,10 +751,13 @@ function renderZone(zoneName, container, opt={}){
 }
 
 function renderZonesEl(...zones){
+  let touchDeckish =false;
   for (const z of zones) {
     const el = zoneToEl(z);
     if (el) renderZone(z, el);
+    if (z === 'DECK' || z === 'T_DECK' || z === 'SIDEDECK') touchDeckish = true;
   }
+  if (touchDeckish) updateDeckTitleCounts();
 }
 
 function zoneToEl(z){ // ゾーン名 → コンテナ要素 への解決（既存の選び方に合わせて）
@@ -919,7 +866,6 @@ function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<'
 function toggleFace(uid){
   const c = findCard(uid); if(!c) return;
   c.faceUp = !c.faceUp;
-  log(`${displayName(c)} を${c.faceUp?'表':'裏'}に`);
   renderZone(c.zone, zoneToEl(c.zone)); updatePreview(uid);
 }
 function toggleTap(uid){
@@ -933,7 +879,6 @@ function toggleTap(uid){
     c.rot = (c.rot + 270) % 360;         // 横 → 縦（= -90°）
   }
 
-  log(`${displayName(c)} を回転 (${c.rot}°)`);
   const el = document.querySelector(`.card[data-uid="${uid}"]`);
   if (el) applySquareBox(el);
 
@@ -975,7 +920,6 @@ function moveCardTo(uid, newZone){
   const from = c.zone;
   const to = newZone;
   if(!allowedMoves[from] || !allowedMoves[from].includes(to)){
-    log(`[無効] ${from}→${to} は移動不可`);
     // 元に戻す
     ZONES[from].push(c);
     renderZonesEl(from, to); updatePreview(uid);
@@ -988,7 +932,6 @@ function moveCardTo(uid, newZone){
       for (const k of Object.keys(c.counters)) c.counters[k] = 0;
     }
     c.counters = {};
-    log(`${displayName(c)}を${from}→${to}（消滅）`);
     // ゾーンへは積まない（=ゲーム状態から削除）
     renderZonesEl(from, to); updatePreview(uid);
     // プレビューは存在しないUIDになるので必要なら安全に無視
@@ -1002,7 +945,6 @@ function moveCardTo(uid, newZone){
     if(INITIAL_RETURN_LEFT<=0) $('#initReturn').classList.add('hidden');
     c.zone = to;
     ZONES[to].push(c); // ボトムへ
-    log(`${displayName(c)} を手札→デッキ（ボトム）。初期戻し残 ${INITIAL_RETURN_LEFT}`);
   }else{
     // 通常はトップに積む（DECK/T_DECK に戻すとき）
     c.zone = to;
@@ -1016,7 +958,6 @@ function moveCardTo(uid, newZone){
     }else{
       ZONES[to].push(c);
     }
-    log(`${displayName(c)} を ${from} → ${to}`);
   }
   renderZonesEl(from, to); updatePreview(uid);
 }
@@ -1029,7 +970,7 @@ function shuffle(arr){
   }
 }
 function drawFromMain(){
-  if(ZONES.DECK.length===0){ log('デッキ切れ'); return; }
+  if(ZONES.DECK.length===0){ return; }
   const c = ZONES.DECK[0];
   __CTX = 'draw:main';
   try{
@@ -1039,11 +980,10 @@ function drawFromMain(){
   }
   const moved = findCard(c.uid);
   if(moved){ moved.faceUp = true; }
-  log(`${displayName(moved||c)} をドロー`);
   renderAll();
 }
 function drawFromTDeck(){
-  if(ZONES.T_DECK.length===0){ log('領土デッキ切れ'); return; }
+  if(ZONES.T_DECK.length===0){ return; }
   const c = ZONES.T_DECK[0];
   __CTX = 'draw:tdeck';
   try{
@@ -1053,7 +993,6 @@ function drawFromTDeck(){
   }
   const moved = findCard(c.uid);
   if(moved){ moved.faceUp = true; }
-  log(`${displayName(moved||c)} を領土へ補充`);
   renderAll();
 }
 function initDraw7(){
@@ -1114,7 +1053,6 @@ function resetBoard(){
   INITIAL_RETURN_LEFT = 0;
   $('#initReturn').classList.toggle('hidden', INITIAL_RETURN_LEFT<=0);
   $('#initReturnLeft').textContent = INITIAL_RETURN_LEFT;
-//  log('盤面リセット');
 }
 
 //初期セットアップ（読込/検証）
@@ -1247,7 +1185,6 @@ startBtn.onclick = ()=>{
   overlay.classList.add('hidden');
   SEED = randomSeed(); $('#seedView').textContent = SEED;
   buildInitialZones(loadedDeckData);
-  log('ゲーム開始。基礎デッキ: '+ZONES.DECK.length+' / 領土デッキ: '+ZONES.T_DECK.length +'/サイドデッキ: '+ZONES.SIDEDECK.length);
 };
 
 initFieldState({
@@ -1271,29 +1208,37 @@ initFieldState({
 initCounters({
   findCard,                 // uid -> card を返す関数
   renderZone,               // 影響ゾーンのみ再描画したいので
-  zoneToEl: (z)=> {
-    // ゾーン名 → コンテナ要素 への解決（既存の選び方に合わせて）
-    switch(z){
-      case 'FREE':        return $('#zone-free .content');
-      case 'BATTLEFIELD': return $('#battlefield');
-      case 'HAND':        return $('#hand');
-      case 'DECK':        return $('#mainDeck');
-      case 'T_FIELD':     return $('#territory');
-      case 'T_DECK':      return $('#tDeck');
-      case 'GRAVE':       return $('#grave');
-      case 'BANISH':      return $('#banish');
-      case 'SIDEDECK':    return $('#sideDeck');
-      default:            return null;
+  renderAll,
+
+  onCounterChange: ({ uid, typ, before, after, delta, src })=>{
+    const card = findCard(uid); if (!card) return;
+
+    const beforeSnap = snapshotCard(card);
+    const afterSnap  = snapshotCard(card);
+    // スナップショットへ “見かけの値” を明示しておく
+    beforeSnap.counters = { ...(beforeSnap.counters||{}), [typ]: before|0 };
+    afterSnap.counters  = { ...(afterSnap.counters||{}),  [typ]: after|0  };
+
+    if (!__SILENT && delta !== 0){
+      const ev = {
+        id:   ++OP_ID,
+        type: Action.COUNTER,
+        ts:   Date.now(),
+        card: afterSnap,
+        prev: beforeSnap,
+        next: afterSnap,
+        meta: { ctype: typ, delta: delta|0, src },
+      };
+      recordAndPush(ev);
     }
   },
-  renderAll,               // 全面再描画も必要な場面があるため
   log, displayName         // ログ文言の統一のため
 });
 
 // UIボタン動作
-$('#btnShuffleMain').onclick = ()=>{ shuffle(ZONES.DECK); renderAll(); log('基礎デッキをシャッフル'); };
+$('#btnShuffleMain').onclick = ()=>{ shuffle(ZONES.DECK); renderAll(); };
 $('#btnDrawFromDeck').onclick = ()=> drawFromMain();
-$('#btnShuffleTerr').onclick = ()=>{ shuffle(ZONES.T_DECK); renderAll(); log('領土デッキをシャッフル'); };
+$('#btnShuffleTerr').onclick = ()=>{ shuffle(ZONES.T_DECK); renderAll(); };
 $('#btnDrawFromTDeck').onclick = ()=> drawFromTDeck();
 $('#btnDraw1').onclick = ()=> drawFromMain();
 $('#btnInit7').onclick = ()=> initDraw7();
@@ -1305,7 +1250,6 @@ $('#btnReset').onclick = ()=>{
     __SILENT = false;
   }
   clearHistory();
-  log('盤面をリセット（履歴をリセット）');
 };
 $('#btnShot').onclick = ()=> takeScreenshot();
 $('#btnExport').onclick = ()=> exportState();
@@ -1335,7 +1279,6 @@ $('#btnReloadDeck').onclick = ()=>{
         __SILENT = false;
         }
         clearHistory();
-        log('デッキを再選択: '+file.name);
       }catch(e){
         alert('デッキJSONの読み込みに失敗: '+e.message);
       }
@@ -1359,7 +1302,7 @@ $('#resetSideDeck').onclick = () => {
     // 「キャンセル」が押された場合は何もしない
 };
 $('#btnDealToFree').onclick = ()=>{
-  if(ZONES.DECK.length === 0){ log('デッキ切れ'); return; }
+  if(ZONES.DECK.length === 0){ return; }
   const c = ZONES.DECK[0];            // shift() せずにUIDを取得
   __CTX = 'btnDealToFree';
   try{
@@ -1373,7 +1316,6 @@ $('#btnDealToFree').onclick = ()=>{
   }
   const moved = findCard(c.uid);
   renderAll();
-  log(`${displayName(moved||c)} を FREE へ`);
 };
 document.getElementById('btnSide')?.addEventListener('click', ()=>{
   document.getElementById('sidePanel')?.classList.toggle('hidden');
@@ -1411,12 +1353,10 @@ document.addEventListener('drop', (e)=>{
     const card = findCard(uid); if (!card) return;
 
     if (card.zone === 'FREE' || card.zone === 'SIDEDECK') {
-      log(`${displayName(card)} は ${card.zone} のため [効果] は発火しません`);
       e.stopPropagation();
       return;
     }
     triggerShineEffect(uid);    // 0.7s：拡大しながらシャイン→戻す
-    log(`${displayName(card)} に [効果] を発火（0.7s）`);
     e.stopPropagation();        // ★ 念のため二重防御
     return;
   }  
@@ -1431,29 +1371,7 @@ document.addEventListener('drop', (e)=>{
     const card = findCard(uid);
     if(!card) return;
 
-    const beforeSnap = snapshotCard(card);
-    const beforeVal = beforeSnap.counters?.[typ] || 0;
-
-    adjustCounter(uid, typ, +1)
-
-    const afterSnap = snapshotCard(card);
-    const afterVal  = afterSnap.counters?.[typ] || 0;
-    const delta     = afterVal -beforeVal;
-
-    // 履歴に積む（apply() 中の __SILENT=true のときは記録しない）
-    if (!__SILENT && delta !== 0) {
-      const ev = {
-        id:   ++OP_ID,
-        type: Action.COUNTER,
-        ts:   Date.now(),
-        card: afterSnap,          // 「その操作後のカード状態」
-        prev: beforeSnap,
-        next: afterSnap,
-        meta: { ctype: typ, delta, via: 'palette' },
-      };
-      recordAndPush(ev);
-    }
-    log(`${displayName(card)} にカウンターを追加 (${typ})`);
+    adjustCounter(uid, typ, +1, 'drop'); 
     e.stopPropagation();
     return;
   }
@@ -1614,139 +1532,6 @@ function updateUndoRedoButtons(){
   const r = document.getElementById('btnRedo');
   if(u) u.disabled = HISTORY.past.length===0;
   if(r) r.disabled = HISTORY.future.length===0;
-}
-function resetClipUI(){
-  const sld = document.getElementById('clipSlider');
-  const st  = document.getElementById('clipStatus');
-  if(sld){ sld.min='0'; sld.max='0'; sld.value='0'; sld.disabled = true; }
-  if(st){  st.textContent = '0/0'; }
-}
-// RECORDING, SESSION
-function beginRecording(){
-  if (RECORDING) return;
-  RECORDING = true;
-  SESSION = {
-    startedAt: nowISO(),
-    baseSnap:  takeFullSnapshot(),  // ★ クリップの基準
-    events:    [],
-    cursor:    0
-  };
-  resetClipUI();
-
-}
-
-function endRecording(){
-  if(!RECORDING) return;
-  RECORDING = false;
-  const n   = SESSION?.events?.length || 0;
-  const sld = document.getElementById('clipSlider');
-  const st  = document.getElementById('clipStatus');
-  if(sld){ sld.disabled = (n===0); sld.min='0'; sld.max=String(n); sld.value='0'; }
-  if(st){  st.textContent = `0/${n}`; }
-  SESSION.cursor = 0;
-}
-// Record/Stop のクリック切り替え
-document.addEventListener('click', (e) => {
-  const btn = e.target.closest('#btnRecToggle');
-  if (!btn) return;
-   console.log('[rec-click]', btn.id);
-  e.preventDefault();
-  
-  const rec = btn.dataset.state === 'recording';
-  if(!rec){
-    beginRecording();             // 開始
-    btn.dataset.state = 'recording';
-    btn.textContent   = 'STOP';
-  }else{
-    endRecording();               // 停止
-    btn.dataset.state = 'stopped';
-    btn.textContent   = '●REC';
-  }
-});
-
-function recordAndPush(ev){
-  HISTORY.past.push(ev);
-  HISTORY.future.length = 0;
-  updateUndoRedoButtons();
-  updateHistoryBar();
-
-  // ★ 録画中はクリップにも積む（EFFECTは除外推奨）
-  if(RECORDING && SESSION ){
-    SESSION.events.push(ev);
-
-    const sld = document.getElementById('clipSlider');
-    const st  = document.getElementById('clipStatus');
-    if(sld){ sld.max = String(SESSION.events.length); sld.disabled = false; }
-    if(st){  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`; }
-  }
-}
-function clipJumpTo(target){
-  if (!SESSION) return;
-  target = Math.max(0, Math.min(target|0, SESSION.events.length));
-
-  restoreFullSnapshot(SESSION.baseSnap);// 基準へ巻き戻し
-
-  // 先頭から target 件 適用（サイレント適用・履歴を汚さない）
-  __SILENT = true;
-  try{
-    for (let i=0; i<target; i++){
-      apply(SESSION.events[i], { animate:false }); // 連続ジャンプはアニメOFF推奨
-    }
-  } finally { __SILENT = false; }
-
-  SESSION.cursor = target;
-  const sld = document.getElementById('clipSlider');
-  const st  = document.getElementById('clipStatus');
-  if(sld) sld.value = String(target);
-  if(st)  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`;
-}
-function clipStepForward({ animate=true }={}){
-  if (!SESSION) return false;
-  if (SESSION.cursor >= SESSION.events.length) return false;
-
-  const ev = SESSION.events[SESSION.cursor];
-  __SILENT = true;
-  try{ apply(ev, { animate }); 
-  } finally { __SILENT = false; }
-  SESSION.cursor++;
-
-  const sld = document.getElementById('clipSlider');
-  const st  = document.getElementById('clipStatus');
-  if(sld) sld.value = String(SESSION.cursor);
-  if(st)  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`;
-  return true;
-}
-
-function clipStepBackward(){
-  if (!SESSION) return false;
-  if (SESSION.cursor <= 0) return false;
-
-  // シンプルに「1つ前へジャンプ」：基準に戻して cursor-1 件再適用
-  clipJumpTo(SESSION.cursor - 1);
-  return true;
-}
-// シークバー（change で十分。ドラッグ中も追従させたいなら input でもOK）
-const clipSlider = document.getElementById('historySlider');
-if (clipSlider){
-  clipSlider.addEventListener('change', (e)=>{
-    clipJumpTo(Number(e.target.value||0));
-  });
-}
-
-// |◀ / ▷ / ▶|
-const bPlay = document.getElementById('btnPlayToggle');
-
-bPlay && (bPlay.onclick = ()=>{
-  if (REPLAY_TIMER) stopReplay();
-  else              startReplay();
-});
-
-// 倍速
-function setReplayRate(rate){
-  REPLAY_RATE = rate;
-  document.querySelectorAll('.rateGroup .rate')
-    .forEach(b=> b.classList.toggle('active', parseFloat(b.dataset.rate||'1')===rate));
-  if(REPLAY_TIMER){ stopReplay(); startReplay(); }
 }
 
 function invert(ev){
@@ -2158,31 +1943,70 @@ function stepForward(opts = { animate:true, logRedo:true }){
   updateUndoRedoButtons();
 })();
 
-// 初期化
-document.querySelectorAll('.rateGroup .rate').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    const rate = parseFloat(btn.dataset.rate || '1');
-    setReplayRate(rate);
-  });
-});
-// デフォルトで x1 をアクティブに
-setReplayRate(1);
+/*---------------------------
+--- recording / replay  UI---
+---------------------------*/
+function beginRecording(){
+  if (RECORDING) return;
+  stopReplay(); // ← 追加（再生中なら止める）
+  RECORDING = true;
+  SESSION = { startedAt: nowISO(), baseSnap: takeFullSnapshot(), events: [], cursor: 0 };
+  resetClipUI();
+}
+function endRecording(){
+  if(!RECORDING) return;
+  RECORDING = false;
+  const n   = SESSION?.events?.length || 0;
+  const sld = document.getElementById('clipSlider');
+  const st  = document.getElementById('clipStatus');
+  if(sld){ sld.disabled = (n===0); sld.min='0'; sld.max=String(n); sld.value='0'; }
+  if(st){  st.textContent = `0/${n}`; }
+  SESSION.cursor = 0;
+}
+function setReplayRate(rate){
+  REPLAY_RATE = rate;
+  document.querySelectorAll('.rateGroup .rate')
+    .forEach(b=> b.classList.toggle('active', parseFloat(b.dataset.rate||'1')===rate));
+  if(REPLAY_TIMER){ stopReplay(); startReplay(); } // レート変更は立て直し
+}
 
+function updateHistoryBar(){
+  const slider = document.getElementById('historySlider');
+  const label  = document.getElementById('historyLabel');
+  const status = document.getElementById('replayStatus');
+  if(!slider || !label) return;
+
+  const total   = HISTORY.past.length + HISTORY.future.length;
+  const current = HISTORY.past.length;  // ←ここが「今どこまで適用済みか」
+
+  if (slider){
+    slider.max   = String(total);
+    slider.value = String(current);
+    slider.disabled = total === 0;
+  }
+  if (label){
+    label.textContent = `${current} / ${total}`;
+  }
+  if (status){
+    status.textContent = `${current} / ${total}`;
+  }
+}
 function startReplay(){
-  // SESSION が無い or クリップ0件なら開始しない
   if (!SESSION || (SESSION.events?.length||0) === 0) {
     console.warn('[replay] no session or empty events');
     return;
   }
   if (REPLAY_TIMER) return;
+
+  // 末尾に居たら先頭へ if (SESSION.cursor >= SESSION.events.length) clipJumpTo(0);
   clipJumpTo(0);
 
   setPlayButtonState('playing');
   enterReplayLock();
   const interval = Math.max(120, BASE_INTERVAL / REPLAY_RATE);
   REPLAY_TIMER = setInterval(()=>{
-    const ok = clipStepForward?.({ animate:true }) 
-    if (!ok) stopReplay();                                   // 末尾で自動停止
+    const ok = clipStepForward({ animate:true });
+    if (!ok) stopReplay();     // 末尾到達で自動停止
   }, interval);
 }
 function stopReplay(){
@@ -2192,59 +2016,180 @@ function stopReplay(){
   leaveReplayLock();
   setPlayButtonState('stopped');
 }
+
 function setPlayButtonState(state){ // 'playing' | 'stopped'
-  const btn = document.getElementById('btnPlayToggle');
+  const btn = document.getElementById('btnPlayToggle') || document.getElementById('clipPlay');
   if (!btn) return;
   btn.dataset.state = state;
   const playing = state === 'playing';
-  btn.textContent = playing ? '▮▮' : '再生 ▷';           // 文字でトグル
+  btn.textContent = playing ? '▮' : '再生 ▷';
   btn.setAttribute('aria-label', playing ? '停止' : '再生');
-  btn.classList.toggle('is-playing', playing);       // 任意のスタイル用
+  btn.classList.toggle('is-playing', playing);
 }
-// クリックでトグル（IDは固定のまま data-state で判定）
-document.getElementById('btnPlayToggle')?.addEventListener('click', ()=>{
-  const btn = document.getElementById('btnPlayToggle');
-  const playing = btn?.dataset.state === 'playing';
-  playing ? stopReplay() : startReplay();
-});
+function isReplayPlaying(){ return !!REPLAY_TIMER; }
+const ALLOW_DURING_PLAY = '#btnPlayToggle, .rateGroup .btn';
 
-// 初期化（念のため）
-document.addEventListener('DOMContentLoaded', ()=>{
-  const btn = document.getElementById('btnPlayToggle');
-  if (btn) {
-    setPlayButtonState(btn.dataset.state === 'playing' ? 'playing' : 'stopped');
-    btn.addEventListener('click', ()=>{
-      (btn.dataset.state === 'playing') ? stopReplay() : startReplay();
-    });
+function enterReplayLock(){
+  document.body.classList.add('replaying');
+  document.querySelectorAll('button, input, select, a').forEach(el=>{
+    if (el.matches('#btnPlayToggle') || el.closest('.rateGroup')) return;
+    if (!el.hasAttribute('data-prev-disabled')){
+      el.setAttribute('data-prev-disabled', el.disabled ? '1' : '0');
+    }
+    el.disabled = true;
+  });
+}
+function leaveReplayLock(){
+  document.body.classList.remove('replaying');
+  document.querySelectorAll('[data-prev-disabled]').forEach(el=>{
+    const prev = el.getAttribute('data-prev-disabled') === '1';
+    el.disabled = prev;
+    el.removeAttribute('data-prev-disabled');
+  });
+}
+// 抜け道封じ（capture）
+['click','mousedown','mouseup','pointerdown','pointerup','contextmenu',
+ 'dragstart','drop','keydown','wheel','touchstart','touchmove'].forEach(type=>{
+  document.addEventListener(type,(e)=>{
+    if(!isReplayPlaying()) return;
+    if(e.target.closest?.(ALLOW_DURING_PLAY)) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+});
+// ===== スナップショット全体 =====
+function takeFullSnapshot(){
+  // ゲーム全体の完全スナップショット（ZONES, UID_MAP由来）
+  const zones = {};
+  for (const k of Object.keys(ZONES)){
+    zones[k] = ZONES[k].map(c=>({
+      uid: c.uid, cardNo: c.cardNo, name: c.name,
+      faceUp: !!c.faceUp, rot: c.rot|0,
+      counters: { ...(c.counters||{}) },
+      zone: c.zone, isToken: !!c.isToken
+    }));
+  }
+  return { zones };
+}
+function restoreFullSnapshot(snap){
+  // 既存DOMを一気に置き換える前提でZONES/UID_MAPを再構築
+  for (const k of Object.keys(ZONES)) ZONES[k].length = 0;
+  UID_MAP.clear();
+
+  for (const [zone, arr] of Object.entries(snap.zones||{})){
+    for (const s of arr){
+      const card = { ...s };
+      UID_MAP.set(card.uid, card);
+      ZONES[zone].push(card);
+    }
+  }
+  renderAll();
+}
+
+function resetClipUI(){
+  const sld = document.getElementById('clipSlider');
+  const st  = document.getElementById('clipStatus');
+  if(sld){ sld.min='0'; sld.max='0'; sld.value='0'; sld.disabled = true; }
+  if(st){  st.textContent = '0/0'; }
+}
+function clipJumpTo(target){
+  if(!SESSION) return;
+  target = Math.max(0, Math.min(target|0, SESSION.events.length));
+  restoreFullSnapshot(SESSION.baseSnap);
+  __SILENT = true;
+  try{ for(let i=0;i<target;i++) apply(SESSION.events[i], { animate:false }); }
+  finally{ __SILENT = false; }
+  SESSION.cursor = target;
+  const sld=document.getElementById('clipSlider'), st=document.getElementById('clipStatus');
+  if(sld) sld.value = String(target);
+  if(st)  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`;
+}
+function clipStepForward({animate=true}={}){
+  if(!SESSION) return false;
+  if(SESSION.cursor >= SESSION.events.length) return false;
+  const ev = SESSION.events[SESSION.cursor];
+  __SILENT = true; try{ apply(ev, { animate }); } finally{ __SILENT = false; }
+  SESSION.cursor++;
+  const sld=document.getElementById('clipSlider'), st=document.getElementById('clipStatus');
+  if(sld) sld.value = String(SESSION.cursor);
+  if(st)  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`;
+  return true;
+}
+function clipStepBackward(){
+  if(!SESSION) return false;
+  if(SESSION.cursor <= 0) return false;
+  clipJumpTo(SESSION.cursor - 1);
+  return true;
+}
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('#btnRecToggle');
+  if(!btn) return;
+  e.preventDefault();
+  const rec = btn.dataset.state === 'recording';
+  if(!rec){
+    beginRecording();
+    btn.dataset.state = 'recording';
+    btn.textContent   = 'STOP';
+  }else{
+    endRecording();
+    btn.dataset.state = 'stopped';
+    btn.textContent   = '●REC';
+  }
+});
+function recordAndPush(ev){
+  HISTORY.past.push(ev);
+  HISTORY.future.length = 0;
+  updateUndoRedoButtons();
+  updateHistoryBar();
+
+  if(RECORDING && SESSION /* && ev.type !== Action.EFFECT */){
+    SESSION.events.push(ev);
+    const sld=document.getElementById('clipSlider'), st=document.getElementById('clipStatus');
+    if(sld){ sld.max=String(SESSION.events.length); sld.disabled=false; }
+    if(st){  st.textContent = `${SESSION.cursor}/${SESSION.events.length}`; }
+  }
+}
+
+// ========== Replay UI wiring: 一度だけ初期化 ==========
+(function initReplayUI(){
+  if (window.__REPLAY_UI_INITED) return;   // idempotent
+  window.__REPLAY_UI_INITED = true;
+
+  const slider    = document.getElementById('clipSlider');       // ← リプレイ専用スライダー
+  const btnPrev   = document.getElementById('clipPrev');
+  const btnNext   = document.getElementById('clipNext');
+  const playBtn   = document.getElementById('btnPlayToggle') ||  // どちらか存在する方
+                    document.getElementById('clipPlay');
+  const rateGroup = document.querySelector('.rateGroup');
+
+  // ---- シーク（ドラッグ追従させたいなら input も使用） ----
+  if (slider){
+    const onSeek = (v)=>{ stopReplay(); clipJumpTo(Number(v||0)); };
+    slider.addEventListener('change', e=> onSeek(e.target.value));
+    slider.addEventListener('input',  e=> onSeek(e.target.value));
   }
 
-  // 倍速ボタン
-  document.querySelectorAll('.rateGroup .rate').forEach(b=>{
-    b.addEventListener('click', ()=>{
-      REPLAY_RATE = parseFloat(b.dataset.rate||'1');
-      document.querySelectorAll('.rateGroup .rate')
-        .forEach(x=> x.classList.toggle('active', x===b));
-      if (REPLAY_TIMER){ stopReplay(); startReplay(); }
-    });
+  // ---- 再生トグル（▷/▮▮） ----
+  playBtn?.addEventListener('click', ()=>{
+    REPLAY_TIMER ? stopReplay() : startReplay();
   });
-});
-// UI接続
-document.getElementById('clipSlider')?.addEventListener('change', e=>{
-  stopReplay();
-  clipJumpTo(Number(e.target.value||0));
-});
-document.getElementById('clipPrev')?.addEventListener('click', ()=>{
-  stopReplay(); clipStepBackward();
-});
-document.getElementById('clipNext')?.addEventListener('click', ()=>{
-  stopReplay(); clipStepForward({ animate:true });
-});
-document.getElementById('clipPlay')?.addEventListener('click', ()=>{
-  REPLAY_TIMER ? stopReplay() : startReplay();
-});
-document.querySelectorAll('.rateGroup .rate')
-  .forEach(b=> b.addEventListener('click', ()=> setReplayRate(parseFloat(b.dataset.rate||'1'))));
-setReplayRate(1);
+
+  // ---- ステップ ----
+  btnPrev?.addEventListener('click', ()=>{ stopReplay(); clipStepBackward(); });
+  btnNext?.addEventListener('click', ()=>{ stopReplay(); clipStepForward({ animate:true }); });
+
+  // ---- 倍速は委譲で1か所 ----
+  rateGroup?.addEventListener('click', (e)=>{
+    const b = e.target.closest('.rate');
+    if(!b) return;
+    setReplayRate(parseFloat(b.dataset.rate || '1'));
+  });
+
+  // ---- 初期表示（1回だけ）----
+  setReplayRate(1);
+  const pb = document.getElementById('btnPlayToggle');
+  if (pb) setPlayButtonState(pb.dataset.state === 'playing' ? 'playing' : 'stopped');
+})();
 
 /**
  * 選択中カードを左右の隣と入れ替える（横並びゾーンのみ）
@@ -2263,7 +2208,6 @@ function swapSelectedWithNeighbor(dir){
  if ((zone==='HAND' && $('#sortHand')?.checked) ||
  (zone==='DECK' && $('#sortDeck')?.checked) ||
  (zone==='SIDEDECK' && $('#sortSide')?.checked)){
- log(`${zone} はソートONのため入れ替えできません`);
  return false;
  }
 
@@ -2280,7 +2224,6 @@ function swapSelectedWithNeighbor(dir){
  const el = zoneToEl(zone);
  if (el) renderZone(zone, el);
 
- log(`${displayName(a)} と ${displayName(b)} の順番を入れ替え（${zone} ${i+1}↔${j+1}）`);
  return true;
 }
 //キーボードショートカット
@@ -2313,7 +2256,6 @@ document.addEventListener('keydown', (e)=>{
       moveCardTo(top.uid, 'FREE'); // 統一
       const moved = findCard(top.uid);
       if (moved) { moved.faceUp = true; updatePreview(moved.uid); };
-      log(`${displayName(top)} を基デ→FREE`);
     }
     e.preventDefault();
   }
