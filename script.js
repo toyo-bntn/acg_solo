@@ -1596,6 +1596,15 @@ function apply(ev, opts = {}){
         animateCardMove(uid, fromSnap, toSnap, doApplyMove);
         } else {
           doApplyMove();
+        // ★ 追加：移動後、回転を目標スナップに一致させる
+        const now = findCard(uid);
+        if (now){
+          const want = (toSnap?.rot|0);
+          if ((now.rot|0) !== want){
+            // __SILENT 中なので記録されない。差分だけ回す。
+            toggleTap(uid, want - (now.rot|0));
+          }
+        }
         }
       }
       break;
@@ -1683,6 +1692,16 @@ function orderByUID(arr, uidOrder){
     const isTok      = cardBefore && isToken(cardBefore);
     const fromZone   = beforeSnap?.zone;
     const res = _move(uid, newZone);
+    
+  let resetRot = false;   // ★ 追加: T_DECK へ入ったら回転をリセット
+  const c = findCard(uid);
+  if (c && newZone === 'T_DECK' && (c.rot|0) !== 0){
+    c.rot = 0;
+    // 1枚だけ更新できる関数がなければ renderZonesOf(c) か renderAll() を呼ぶ
+    if (typeof renderZonesOf === 'function') renderZonesOf(c);
+    else renderAll();
+    resetRot = true;
+  }
 
     const cardAfter = findCard(uid);
     const afterSnap = snapshotCard(cardAfter);
@@ -1784,14 +1803,14 @@ function orderByUID(arr, uidOrder){
   drawFromMain = wrappedDrawFromMain;
   window.drawFromMain = wrappedDrawFromMain;
   const _drawTD = drawFromTDeck;
-  function wrappedDrawFromDeck(){ 
+  function wrappedDrawFromTDeck(){ 
     __CTX='draw:tdeck'; 
     const r=_drawTD(); 
     __CTX=null; 
     return r; 
   }
-  drawFromTDeck = wrappedDrawFromDeck;
-  window.drawFromDeck = wrappedDrawFromDeck;
+  drawFromTDeck = wrappedDrawFromTDeck;
+  window.drawFromTDeck = wrappedDrawFromTDeck;
   // init draw 7
   const _initdraw7 = initDraw7;
   function wrappedInitDraw7(){ 
