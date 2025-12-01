@@ -802,6 +802,37 @@ function selectCard(uid, el){
   if (typeof updatePreview === 'function') updatePreview(uid);
 }
 
+// 条件文字ごとの色定義
+const CONDITION_COLORS = {
+  '森': '#228B22',   // 緑
+  '山': '#cc0000',   // 赤
+  '水': '#0066ff',   // 青
+  '夜': '#000000',   // 黒
+  '平': '#fda610ff',   // 肌色
+  '無': '#5a5a5aff'    // 濃い灰色
+};
+
+// 条件文字列を「色付き1文字ごとの span」に分解して包むタグを作る
+function createConditionTag(condStr) {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'tag condition-tag';
+
+  for (const ch of condStr) {
+    // 空白はスキップ（全角・半角）
+    if (ch === ' ' || ch === '　') continue;
+
+    const seg = document.createElement('span');
+    seg.textContent = ch;
+
+    const color = CONDITION_COLORS[ch];
+    if (color) {
+      seg.style.color = color;
+    } // 未定義文字は色そのまま（継承）
+    wrapper.appendChild(seg);
+  }
+  return wrapper;
+}
+
 function updatePreview(uid, opts ={}){
   const card = findCard(uid);
   const big = $('#bigImg'), title=$('#infoTitle'), kv=$('#infoKV'), txt=$('#infoText');
@@ -829,13 +860,31 @@ function updatePreview(uid, opts ={}){
   kv.innerHTML='';
   if(info){
     const tags = [];
-    if(info['条件']) tags.push('条件:'+info['条件']);
-    if(typeof info['コスト']!=='undefined' && info['コスト']!=='') tags.push('コスト:'+info['コスト']);
-    if(info['タイプ']) tags.push('タイプ:'+info['タイプ']);
-    if(info['種族']) tags.push('種族:'+info['種族']);
-    for(const t of tags){
-      const el=document.createElement('span'); el.className='tag'; el.textContent=t; kv.appendChild(el);
+    if (typeof info['コスト'] !== 'undefined' && info['コスト'] !== '') {
+      const costTag = document.createElement('span');
+      costTag.className = 'tag cost-tag';
+      // ␣1␣ のように前後に半角スペースを付ける
+      costTag.textContent = ` ${info['コスト']} `;
+      kv.appendChild(costTag);
     }
+
+    if (info['条件']) {
+      const condTag = createConditionTag(info['条件']); // 例: "水平森"
+      kv.appendChild(condTag);
+    }
+    if (info['タイプ']) {
+      const typeTag = document.createElement('span');
+      typeTag.className = 'tag';
+      typeTag.textContent = info['タイプ'];
+      kv.appendChild(typeTag);
+    }
+    if (info['種族']) {
+      const raceTag = document.createElement('span');
+      raceTag.className = 'tag';
+      raceTag.textContent = info['種族'];
+      kv.appendChild(raceTag);
+    }
+
     const atk = info['ATK'], def = info['DEF'];
     let html = '';
     if(atk!=null || def!=null){
@@ -845,9 +894,9 @@ function updatePreview(uid, opts ={}){
     // 能力
     const kws = info['キーワード能力']||[];
     const ab = info['能力']||[];
-    if(kws.length){ html += '<div><b>キーワード能力:</b> '+kws.join(' / ')+'</div>'; }
+    if(kws.length){ html += '<div><b>ｷｰﾜｰﾄﾞ能力：</b> '+kws.join(' / ')+'</div>'; }
     if(ab.length){
-      html += '<div style="margin-top:2px"><b>能力:</b><ol style="margin:4px 0 0 0px;padding-left: 30px;padding-right: 5px; padding-bottom :20px;font-size: 14px">';
+      html += '<div style="margin-top:2px"><b>能力:</b><ol style="margin:4px 0 0 0px;padding-left: 30px;padding-right: 5px; padding-bottom :20px;font-size: 16px">';
       for(const a of ab){
         const t = a['テキスト']||'';
         html += '<li>'+escapeHtml(t)+'</li>';
@@ -2292,3 +2341,4 @@ window.onDragOver = onDragOver;
 window.onDrop = onDrop;
 
 //https://toyo-bntn.github.io/acg_solo/
+//python -m http.server 8000 

@@ -101,7 +101,7 @@
   overflow: auto;
 }
 /* プレビュー情報の見出し */
-#zone-preview .info .stats{ margin:2px 0; font-size:14px; }
+#zone-preview .info .stats{ margin:2px 0; font-size:16px; font-weight: bold}
 #zone-preview .info .sep{ height:1px; background:var(--panel2); margin:3px 0; opacity:.8 }
 #zone-preview .info .abilityList{ margin:4px 0 0 0; padding-left:18px; font-size:16px }
 
@@ -231,10 +231,10 @@
 /* プレビュー画像枠の高さ */
   .big{ flex:0 0 var(--preview-big-height); /* 350pxだった箇所 */ }
   .big img{width:100%; height:100%; object-fit:contain; background:var(--panel2);}
-  .info{flex:1; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:4px; font-size:14px; background:var(--panel2);}
+  .info{flex:1; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:4px; font-size:16px; background:var(--panel2);}
   .info h4{margin:0 0 6px 0}
   .info .kv{display:flex; gap:4px; flex-wrap:wrap; color:#002040}
-  .kv .tag{border:1px solid var(--border); border-radius:999px; padding:3px 3px; font-size:13px; background:var(--panel2);}
+  .kv .tag{border:1px solid var(--border); border-radius:999px; padding:3px 3px; font-size:14px; font-weight: bold;background:var(--panel2);}
   .log{height:100%; overflow:auto; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:6px}
   .counterPalette{display:grid; grid-template-columns: repeat(2, 1fr); gap:4px; flex-wrap:wrap}
   .paletteItem{border:1px solid var(--border); border-radius:999px; padding:4px 5px; background:var(--panel2); cursor:grab;display:inline-flex;
@@ -598,4 +598,18 @@ body.replaying .rateGroup .btn {
 a[aria-disabled="true"] {
   opacity: .5;
   cursor: not-allowed;
+}
+/* コスト用タグ：太字、スペースをそのまま表示 */
+.tag.cost-tag {
+  font-weight: bolder;
+  /* 前後スペースをそのまま見せたい場合は pre にしておくと安全 */
+  white-space: pre;
+}
+
+/* 条件タグの中の各文字に影を付ける */
+.tag.condition-tag span {
+  /* 影の例：うっすら縁取りっぽく */
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.305);
+  margin: 0 1px; /* 文字同士の間隔を少しだけ空ける */
+  font-weight: bold; /* 条件を強調したければ */
 }
