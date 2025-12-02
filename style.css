@@ -613,3 +613,46 @@ a[aria-disabled="true"] {
   margin: 0 1px; /* 文字同士の間隔を少しだけ空ける */
   font-weight: bold; /* 条件を強調したければ */
 }
+
+/* =========================
+   ライフカウンター
+   ========================= */
+.lifeCounter{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;          /* サイド表示ボタンとの「1つ分のスペース」 */
+  padding-left: 8px;
+  border-left: 1px solid var(--border); /* 軽く区切り線（不要なら消してOK） */
+  font-size: 16px;
+}
+
+.lifeCounter .life{
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.lifeCounter .lifeDivider{
+  padding: 0 4px;
+  opacity: 0.8;
+}
+
+.lifeCounter .lifeBtn{
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0px;
+  line-height: 1;
+  font-size: 14px;
+}
+
+.lifeCounter .lifeValue{
+  min-width: 26px;
+  text-align: center;
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+}

@@ -60,6 +60,19 @@
       <button class="btn" id="btnReset">!!盤面リセット!!</button>
       <button class="btn" id="btnSide">サイド表示</button> 
       <span id="initReturn" class="pill bad hidden">マリガン（残: <span id="initReturnLeft">2</span>）</span>
+      <div class="lifeCounter" aria-label="ライフカウンター">
+        <div class="life lifeA">
+          <button class="btn sm lifeBtn" id="lifeAUp">▲</button>
+          <span class="lifeValue" id="lifeAValue">20</span>
+          <button class="btn sm lifeBtn" id="lifeADown">▼</button>
+        </div>
+        <span class="lifeDivider"> / </span>
+        <div class="life lifeB">
+          <button class="btn sm lifeBtn" id="lifeBUp">△</button>
+          <span class="lifeValue" id="lifeBValue">20</span>
+          <button class="btn sm lifeBtn" id="lifeBDown">▽</button>
+        </div>
+      </div>
     </div>
     <div class="right">
       <button class="btn" id="btnExport">盤面保存</button>

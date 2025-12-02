@@ -20,6 +20,16 @@ let REPLAY_TIMER = null;
 let REPLAY_RATE  = 1;              // 1 / 2
 const BASE_INTERVAL = 900;         // 1ステップの基準ms（MOVEの700msに少し余裕）
 
+let LIFE_LEFT  = 20; // ▲▼ で増減
+let LIFE_RIGHT = 20; // △▽ で増減
+
+function updateLifeViews(){
+  const leftEl  = document.getElementById('lifeAValue');
+  const rightEl = document.getElementById('lifeBValue');
+  if (leftEl)  leftEl.textContent  = LIFE_LEFT;
+  if (rightEl) rightEl.textContent = LIFE_RIGHT;
+}
+
 function log(msg){
   const t = new Date();
   const hh = String(t.getHours()).padStart(2,'0');
@@ -1295,6 +1305,8 @@ $('#btnReset').onclick = ()=>{
   __SILENT = true;
   try{
     resetBoard();       // 盤面を初期状態に戻す
+    LIFE_LEFT  = 20; LIFE_RIGHT = 20;
+    updateLifeViews();
   } finally {
     __SILENT = false;
   }
@@ -1373,7 +1385,73 @@ document.getElementById('btnSide')?.addEventListener('click', ()=>{
 document.getElementById('btnSideClose')?.addEventListener('click', ()=>{
   document.getElementById('sidePanel')?.classList.add('hidden');
 });
-        
+(function setupLifeCounter(){
+  const btnAUp   = document.getElementById('lifeAUp');   // ▲
+  const btnADown = document.getElementById('lifeADown'); // ▼
+  const btnBUp   = document.getElementById('lifeBUp');   // △
+  const btnBDown = document.getElementById('lifeBDown'); // ▽
+
+  if (!btnAUp || !btnADown || !btnBUp || !btnBDown) return;
+
+  LIFE_LEFT  = 20; LIFE_RIGHT = 20;   // 初期値 20 / 20
+  updateLifeViews();
+  function pushLifeEvent(side, beforeLeft, beforeRight, afterLeft, afterRight){
+    // 変化がなければ何も記録しない
+    if (beforeLeft === afterLeft && beforeRight === afterRight) return;
+    const delta =
+      side === 'L' ? (afterLeft - beforeLeft) :
+      side === 'R' ? (afterRight - beforeRight) : 0;
+
+    const ev = {
+      id:   ++OP_ID,
+      type: Action.LIFE,
+      ts:   Date.now(),
+      card: null,
+      prev: { left: beforeLeft, right: beforeRight },
+      next: { left: afterLeft,  right: afterRight  },
+      meta: { side, delta },
+    };
+    if (!__SILENT){
+      recordAndPush(ev);
+    }
+  }
+  // ▲：左を +1
+  btnAUp.addEventListener('click', () => {
+    const beforeL = LIFE_LEFT;
+    const beforeR = LIFE_RIGHT;
+    LIFE_LEFT = LIFE_LEFT + 1;
+    updateLifeViews();
+    pushLifeEvent('L', beforeL, beforeR, LIFE_LEFT, LIFE_RIGHT);
+  });
+
+  // ▼：左を -1（0 まで）
+  btnADown.addEventListener('click', () => {
+    const beforeL = LIFE_LEFT;
+    const beforeR = LIFE_RIGHT;
+    LIFE_LEFT = Math.max(0, LIFE_LEFT - 1);
+    updateLifeViews();
+    pushLifeEvent('L', beforeL, beforeR, LIFE_LEFT, LIFE_RIGHT);
+  });
+
+  // △：右を +1
+  btnBUp.addEventListener('click', () => {
+    const beforeL = LIFE_LEFT;
+    const beforeR = LIFE_RIGHT;
+    LIFE_RIGHT = LIFE_RIGHT + 1;
+    updateLifeViews();
+    pushLifeEvent('R', beforeL, beforeR, LIFE_LEFT, LIFE_RIGHT);
+  });
+
+  // ▽：右を -1（0 まで）
+  btnBDown.addEventListener('click', () => {
+    const beforeL = LIFE_LEFT;
+    const beforeR = LIFE_RIGHT;
+    LIFE_RIGHT = Math.max(0, LIFE_RIGHT - 1);
+    updateLifeViews();
+    pushLifeEvent('R', beforeL, beforeR, LIFE_LEFT, LIFE_RIGHT);
+  });
+})();
+
 //カウンターパレット → カードへドロップ
 let typ = null;
 $$('#counterPalette .paletteItem').forEach(el=>{
@@ -1486,7 +1564,7 @@ function animateCardMove(uid, fromSnap, toSnap, doApplyMove){
 // ===============================
 // 操作ログ / Undo-Redo / 録画エンジン
 // ===============================
-const Action = { MOVE:'move', ROTATE:'rotate', FLIP:'flip', COUNTER:'counter', DRAW:'draw', SHUFFLE:'shuffle', CREATE:'create', DESTROY:'destroy', EFFECT:'effect', UNDO:'undo', REDO:'redo' };
+const Action = { MOVE:'move', ROTATE:'rotate', FLIP:'flip', COUNTER:'counter', DRAW:'draw', SHUFFLE:'shuffle', CREATE:'create', DESTROY:'destroy', EFFECT:'effect', UNDO:'undo', REDO:'redo', LIFE:'life' };
 let __SILENT = false;            // 履歴適用中などの“無記録”ガード
 let __CTX = null;                 // 一部操作の文脈（例: DRAW中）
 let OP_ID = 0;                    // 通し番号
@@ -1573,6 +1651,12 @@ function describeEvent(ev){
     case Action.EFFECT:  return `${card} に[効果]発火`;
     case Action.UNDO:    return `Undo: #${ev.meta?.targetId} を取り消し`;
     case Action.REDO:    return `Redo: #${ev.meta?.targetId} をやり直し`;
+    case Action.LIFE:    {
+      const side = ev.meta?.side === 'L' ? '左' : ev.meta?.side === 'R' ? '右' : '';
+      const delta = ev.meta?.delta || 0;
+      const sign = delta > 0 ? '+' : '';
+      return `ライフ${side ? `(${side})` : ''} ${sign}${delta} → L:${ev.next?.left} / R:${ev.next?.right}`;
+    }
     default:             return ev.type;
   }
 }
@@ -1622,6 +1706,19 @@ function invert(ev){
   if(ev.type===Action.EFFECT){
     // 視覚効果は副作用なし：何もしない“空反転”
     return { id: ++OP_ID, type: Action.EFFECT, ts: Date.now(), card: ev.card };
+  }
+  if(ev.type===Action.LIFE){
+    const meta = { ...(ev.meta||{}) };
+    if (typeof meta.delta === 'number') meta.delta = -meta.delta;
+    return {
+      id:   ++OP_ID,
+      type: Action.LIFE,
+      ts:   Date.now(),
+      card: null,
+      prev: ev.next,
+      next: ev.prev,
+      meta,
+    };
   }
   return { id: ++OP_ID, ...base };
 }
@@ -1721,6 +1818,22 @@ function apply(ev, opts = {}){
       case Action.EFFECT:
         if(ev.card?.uid){ triggerShineEffect(ev.card.uid); }
         break;
+      case Action.LIFE: {
+        // 基本的には next をそのまま適用
+        if (ev.next){
+          if (typeof ev.next.left === 'number')  LIFE_LEFT  = ev.next.left;
+          if (typeof ev.next.right === 'number') LIFE_RIGHT = ev.next.right;
+        } else if (ev.meta && typeof ev.meta.delta === 'number' && ev.meta.side){
+          // フォールバック（prev/nextが無い場合）
+          if (ev.meta.side === 'L'){
+            LIFE_LEFT = Math.max(0, LIFE_LEFT + ev.meta.delta);
+          } else if (ev.meta.side === 'R'){
+            LIFE_RIGHT = Math.max(0, LIFE_RIGHT + ev.meta.delta);
+          }
+        }
+        updateLifeViews();
+        break;
+      }
     }
   } finally {
     __SILENT = false;
@@ -2137,6 +2250,9 @@ function takeFullSnapshot(){
       zone: c.zone, isToken: !!c.isToken
     }));
   }
+  const life = {
+    left: LIFE_LEFT, right: LIFE_RIGHT,
+  };
   return { zones };
 }
 function restoreFullSnapshot(snap){
@@ -2152,6 +2268,11 @@ function restoreFullSnapshot(snap){
     }
   }
   renderAll();
+  if (snap.life){
+    if (typeof snap.life.left === 'number')  LIFE_LEFT  = snap.life.left;
+    if (typeof snap.life.right === 'number') LIFE_RIGHT = snap.life.right;
+    updateLifeViews();  
+  }
 }
 
 function resetClipUI(){
