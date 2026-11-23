@@ -297,7 +297,7 @@ function displayName(card){
   // c.name を最優先。なければ CARD_DB を引き、最後に cardNo をフォールバック
   if(card?.name) return card.name;
   const db = CARD_DB?.[card.cardNo];
-  return (db && (db.名前 || db.name)) || card.cardNo || 'UNKNOWN';
+  return (db && (db['カード名'] || db.名前 || db.name)) || card.cardNo || 'UNKNOWN';
 }
 
 // データと状態
@@ -371,6 +371,8 @@ function imageSrcForCardNo(cardNo){
 function idToCardNoMain(id){
   if(id === 9028) return 'BP1-080'; // 特例
   if(1 <= id && id <= 164) return 'ACG-' + pad3(id);
+  // TDシリーズは3000 + カード番号（例: mainDeck の3046 → TD-046）
+  if(3001 <= id && id <= 3999) return 'TD-' + pad3(id - 3000);
   if(5001 <= id && id <= 5079) return 'BP1-' + pad3(id - 5000);
   if(5101 <= id && id <= 5180) return 'BP2-' + pad3(id - 5100);
   if(5201 <= id && id <= 5280) return 'BP3-' + pad3(id - 5200);
@@ -1119,21 +1121,76 @@ function resetBoard(){
 const overlay = $('#overlay');
 const startBtn = $('#startBtn');
 let loadedDeckData = null;
+const CARD_LIST_URLS = ['./cards.json', './territory.json'];
+let cardListWasSelectedManually = false;
+
+// 既存のカード情報を消さず、カードナンバーをキーとして複数の一覧を統合する。
+function mergeCardLists(sources, {replace=false}={}){
+  const merged = Object.assign(Object.create(null), replace ? {} : CARD_DB);
+  for(const [filename, entries] of sources){
+    if(!Array.isArray(entries)){
+      throw new Error(`${filename} はカードの配列ではありません`);
+    }
+    for(const [index, entry] of entries.entries()){
+      const cardNo = entry?.['カードナンバー'];
+      if(typeof cardNo !== 'string' || !cardNo.trim()){
+        throw new Error(`${filename} の${index + 1}件目にカードナンバーがありません`);
+      }
+      merged[cardNo.trim()] = entry;
+    }
+  }
+  CARD_DB = merged;
+
+  // デッキ開始後に読み込んだ場合も、カード名とプレビューに反映する。
+  if(UID_MAP.size){
+    for(const card of UID_MAP.values()){
+      if(CARD_DB[card.cardNo]) card.name = CARD_DB[card.cardNo]['カード名'] || card.name;
+    }
+    renderAll();
+    if(selectedUID) updatePreview(selectedUID);
+  }
+  return Object.keys(CARD_DB).length;
+}
+
+async function fetchCardList(url){
+  const response = await fetch(url, {cache:'no-cache'});
+  if(!response.ok) throw new Error(`HTTP ${response.status}`);
+  const entries = await response.json();
+  if(!Array.isArray(entries)) throw new Error('カードの配列ではありません');
+  return entries;
+}
 
 async function tryLoadDefaultCardList(){
-  try{
-    const res = await fetch('./card_list.json', {cache:'no-cache'});
-    if(!res.ok) throw 0;
-    const arr = await res.json();
-    CARD_DB = {};
-    for(const it of arr){ CARD_DB[it['カードナンバー']] = it; }
-    $('#cardListStatus').textContent = '自動読込済み';
-    $('#cardListStatus').classList.remove('danger');
-  }catch(_){
-    // 失敗時は何もしない（手動ボタンで読ませる）
+  const results = await Promise.allSettled(CARD_LIST_URLS.map(fetchCardList));
+  // 手動で選択されたデータを、後から自動読込で上書きしない。
+  if(cardListWasSelectedManually) return;
+
+  const sources = [];
+  const errors = [];
+  for(let i = 0; i < results.length; i++){
+    const file = CARD_LIST_URLS[i].split('/').pop();
+    const result = results[i];
+    if(result.status === 'fulfilled') sources.push([file, result.value]);
+    else errors.push(`${file}: ${result.reason?.message || '読込失敗'}`);
   }
+
+  const status = $('#cardListStatus');
+  if(sources.length){
+    try{
+      const count = mergeCardLists(sources, {replace:true});
+      const loaded = sources.map(([file, entries])=>`${file} ${entries.length}枚`).join(' / ');
+      status.textContent = `${loaded}（計${count}種類）` + (errors.length ? ' / 一部読込失敗' : '');
+    }catch(error){
+      errors.push(error.message);
+    }
+  }
+  if(errors.length){
+    console.warn('カード一覧の読み込み:', ...errors);
+    if(!sources.length) status.textContent = 'カード一覧を読み込めません（手動指定してください）';
+  }
+  status.classList.toggle('danger', errors.length > 0);
 }
-// 起動時に“静かに”試す
+// 起動時に2つのカード一覧を読み込む。
 document.addEventListener('DOMContentLoaded', tryLoadDefaultCardList);
 
 function validateDeck(deck){
@@ -1174,10 +1231,15 @@ function buildInitialZones(deck){
   renderAll();
 }
 
-function openFilePicker(accept, cb){
+function openFilePicker(accept, cb, {multiple=false}={}){
   const inp = document.createElement('input');
   inp.type='file'; inp.accept=accept;
-  inp.onchange = ()=>{ if(inp.files && inp.files[0]) cb(inp.files[0]); };
+  inp.multiple = multiple;
+  inp.onchange = ()=>{
+    if(inp.files && inp.files.length){
+      cb(multiple ? Array.from(inp.files) : inp.files[0]);
+    }
+  };
   inp.click();
 }
 
@@ -1218,25 +1280,22 @@ $('#loadDefaultDeckBtn').onclick = async ()=>{
 };
 
 $('#pickCardListBtn').onclick = ()=>{
-  openFilePicker('.json', (file)=>{
-    const r = new FileReader();
-    r.onload = ()=>{
-      try{
-        const arr = JSON.parse(r.result);
-        CARD_DB = {};
-        for(const it of arr){
-          CARD_DB[it['カードナンバー']] = it;
-        }
-        $('#cardListStatus').textContent = '手動で読込済み';
-        $('#cardListStatus').classList.remove('danger');
-        $('#cardListChosen').textContent = file.name;
-        $('#cardListChosen').classList.remove('hidden');
-      }catch(e){
-        alert('card_list.json の読み込みに失敗: '+e.message);
-      }
-    };
-    r.readAsText(file);
-  });
+  openFilePicker('.json', async files=>{
+    try{
+      const sources = await Promise.all(files.map(async file=>[
+        file.name, JSON.parse(await file.text())
+      ]));
+      // 未選択ファイルの情報はそのまま残し、選択ファイルの同番号だけ更新する。
+      const count = mergeCardLists(sources);
+      cardListWasSelectedManually = true;
+      $('#cardListStatus').textContent = `手動読込済み（計${count}種類）`;
+      $('#cardListStatus').classList.remove('danger');
+      $('#cardListChosen').textContent = files.map(file=>file.name).join(' / ');
+      $('#cardListChosen').classList.remove('hidden');
+    }catch(e){
+      alert('カード一覧JSONの読み込みに失敗: '+e.message);
+    }
+  }, {multiple:true});
 };
 
 startBtn.onclick = ()=>{
