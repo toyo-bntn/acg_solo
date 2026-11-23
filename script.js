@@ -376,6 +376,9 @@ function idToCardNoMain(id){
   if(5001 <= id && id <= 5079) return 'BP1-' + pad3(id - 5000);
   if(5101 <= id && id <= 5180) return 'BP2-' + pad3(id - 5100);
   if(5201 <= id && id <= 5280) return 'BP3-' + pad3(id - 5200);
+  if(5301 <= id && id <= 5380) return 'BP4-' + pad3(id - 5300);
+  if(5401 <= id && id <= 5480) return 'BP5-' + pad3(id - 5400);
+  if(5501 <= id && id <= 5580) return 'BP6-' + pad3(id - 5500);
   console.warn('未知のmainDeck ID', id);
   return 'ACG-' + pad3(id);
 }
